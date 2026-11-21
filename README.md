@@ -80,6 +80,7 @@ npx wrangler deploy                        # -> https://jira-oauth.edv-bartl.at 
 | `GET /callback` | Atlassian → zurück zur App auf `localhost:<port>` |
 | `POST /token {code,state,verifier}` | Code → Tokens (mit Secret) |
 | `POST /refresh {refresh_token}` | Token erneuern (mit Secret) |
+| `GET /privacy`, `/datenschutz` | Datenschutzerklärung (für *Distribution → Sharing*), Kontaktdaten in `wrangler.toml` |
 
 ### App konfigurieren
 

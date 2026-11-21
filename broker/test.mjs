@@ -81,4 +81,12 @@ assert.equal((await call(`/login?port=47823&state=a<b&challenge=${challenge}`)).
 assert.equal((await call("/nope")).status, 404);
 assert.equal((await worker.fetch(new Request(B + "/login"), {})).status, 500, "unconfigured");
 
+// 8. privacy page works even before OAuth is configured, escapes config values
+r = await worker.fetch(new Request(B + "/privacy"), { CONTACT_EMAIL: "a@b.at", CONTACT_ADDRESS: "<x>" });
+assert.equal(r.status, 200);
+const page = await r.text();
+assert.ok(page.includes("mailto:a@b.at") && page.includes("Cloudflare") && page.includes('id="en"'));
+assert.ok(!page.includes("<x>") && page.includes("&lt;x&gt;"));
+assert.equal((await call("/datenschutz")).status, 200);
+
 console.log("broker: all tests passed");

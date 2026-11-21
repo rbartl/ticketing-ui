@@ -9,9 +9,16 @@ workers_dev = false
 
 [vars]
 # Client ID of the OAuth 2.0 (3LO) app from developer.atlassian.com (not secret).
-ATLASSIAN_CLIENT_ID = ""
+ATLASSIAN_CLIENT_ID = "UkNYqZZbOXBDKOm2Ewfq3mgkwkj0r3EA"
 # Must match the callback URL registered in the developer console exactly.
 REDIRECT_URI = "https://jira-oauth.edv-bartl.at/callback"
+
+# Shown on /privacy (privacy policy URL for the developer console "Sharing" form).
+VENDOR_NAME = "EDV Bartl – Robert Bartl"
+CONTACT_EMAIL = ""      # TODO e.g. apps@edv-bartl.at
+CONTACT_ADDRESS = ""    # TODO street, ZIP city, Austria  (use \n for line breaks)
+IMPRINT_URL = ""        # TODO e.g. https://edv-bartl.at/impressum
+PRIVACY_DATE = "2026-11-21"
 
 # Secrets (not in this file):
 #   npx wrangler secret put ATLASSIAN_CLIENT_SECRET

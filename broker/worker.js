@@ -15,6 +15,8 @@
 // Config:  vars:    ATLASSIAN_CLIENT_ID
 //          secrets: ATLASSIAN_CLIENT_SECRET, STATE_KEY (random, >= 32 chars)
 
+import { privacyPage } from "./privacy.js";
+
 const AUTHORIZE_URL = "https://auth.atlassian.com/authorize";
 const TOKEN_URL = "https://auth.atlassian.com/oauth/token";
 const SCOPES = "read:jira-work write:jira-work read:jira-user read:sprint:jira-software read:me offline_access";
@@ -24,6 +26,8 @@ const B64URL = /^[A-Za-z0-9_-]+$/;
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    if (request.method === "GET" && (url.pathname === "/privacy" || url.pathname === "/datenschutz"))
+      return privacyPage(env);
     try {
       if (!env.ATLASSIAN_CLIENT_ID || !env.ATLASSIAN_CLIENT_SECRET || !env.STATE_KEY)
         return json({ error: "server_error", error_description: "broker not configured" }, 500);
