@@ -24,7 +24,7 @@ qt_add_executable(jira-client WIN32 MACOSX_BUNDLE
 
 # OAuth: broker URL (Cloudflare Worker, see broker/) or own app credentials.
 # All can also be set at runtime in <AppData>/oauth.json.
-set(JIRA_OAUTH_BROKER_URL "" CACHE STRING "URL of the OAuth broker worker")
+set(JIRA_OAUTH_BROKER_URL "https://jira-oauth.edv-bartl.at" CACHE STRING "URL of the OAuth broker worker")
 set(JIRA_OAUTH_CLIENT_ID "" CACHE STRING "Atlassian OAuth 2.0 client id")
 set(JIRA_OAUTH_CLIENT_SECRET "" CACHE STRING "Atlassian OAuth 2.0 client secret")
 target_compile_definitions(jira-client PRIVATE

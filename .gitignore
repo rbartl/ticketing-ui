@@ -1,2 +1,5 @@
 build/
 *.user
+broker/node_modules/
+broker/.wrangler/
+broker/.dev.vars

@@ -52,7 +52,7 @@ Pro Konto (= Jira-Site) wählbar, beliebig gemischt (Menü „+ Konto“):
    - **Jira API**: `read:jira-work`, `write:jira-work`, `read:jira-user`, granular `read:sprint:jira-software`
    - **User identity API**: `read:me` (damit die App weiß, *wer* sich angemeldet hat)
 3. *Authorization* → OAuth 2.0 (3LO) → Callback-URL:
-   - mit Broker: `https://<worker>.workers.dev/callback`
+   - mit Broker: `https://jira-oauth.edv-bartl.at/callback`
    - ohne Broker: `http://localhost:47823/callback`
 4. *Distribution* → **Sharing** aktivieren, wenn außer dir noch jemand die App nutzen soll.
 
@@ -71,7 +71,7 @@ npm test                                   # Offline-Test (Node ≥ 18)
 npx wrangler login
 npx wrangler secret put ATLASSIAN_CLIENT_SECRET
 openssl rand -base64 48 | npx wrangler secret put STATE_KEY
-npx wrangler deploy                        # -> https://jira-client-oauth.<subdomain>.workers.dev
+npx wrangler deploy                        # -> https://jira-oauth.edv-bartl.at (DNS + Zertifikat automatisch)
 ```
 
 | Endpoint | Zweck |
@@ -83,11 +83,12 @@ npx wrangler deploy                        # -> https://jira-client-oauth.<subdo
 
 ### App konfigurieren
 
-`<AppData>/oauth.json` (Linux: `~/.local/share/edvbartl/jira-client/oauth.json`), oder dieselben Werte als
+Standardmäßig nutzt die App den Broker `https://jira-oauth.edv-bartl.at` (CMake-Option `JIRA_OAUTH_BROKER_URL`),
+es ist also nichts zu konfigurieren. Überschreiben lässt sich das per `<AppData>/oauth.json` (Linux: `~/.local/share/edvbartl/jira-client/oauth.json`), oder dieselben Werte als
 CMake-Optionen (`-DJIRA_OAUTH_BROKER_URL=…` bzw. `-DJIRA_OAUTH_CLIENT_ID=… -DJIRA_OAUTH_CLIENT_SECRET=…`):
 
 ```json
-{ "broker_url": "https://jira-client-oauth.<subdomain>.workers.dev" }
+{ "broker_url": "https://jira-oauth.edv-bartl.at" }
 ```
 oder ohne Broker (eigene App, Secret lokal):
 ```json

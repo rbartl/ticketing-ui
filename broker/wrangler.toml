@@ -2,10 +2,17 @@ name = "jira-client-oauth"
 main = "worker.js"
 compatibility_date = "2025-06-01"
 
+# Served on our own domain. Cloudflare creates the DNS record + certificate on deploy
+# (the zone edv-bartl.at must be active in this Cloudflare account).
+routes = [{ pattern = "jira-oauth.edv-bartl.at", custom_domain = true }]
+workers_dev = false
+
 [vars]
 # Client ID of the OAuth 2.0 (3LO) app from developer.atlassian.com (not secret).
 ATLASSIAN_CLIENT_ID = ""
+# Must match the callback URL registered in the developer console exactly.
+REDIRECT_URI = "https://jira-oauth.edv-bartl.at/callback"
 
 # Secrets (not in this file):
 #   npx wrangler secret put ATLASSIAN_CLIENT_SECRET
-#   npx wrangler secret put STATE_KEY          # e.g. output of: openssl rand -base64 48
+#   openssl rand -base64 48 | npx wrangler secret put STATE_KEY
