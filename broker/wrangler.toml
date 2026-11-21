@@ -1,0 +1,11 @@
+name = "jira-client-oauth"
+main = "worker.js"
+compatibility_date = "2025-06-01"
+
+[vars]
+# Client ID of the OAuth 2.0 (3LO) app from developer.atlassian.com (not secret).
+ATLASSIAN_CLIENT_ID = ""
+
+# Secrets (not in this file):
+#   npx wrangler secret put ATLASSIAN_CLIENT_SECRET
+#   npx wrangler secret put STATE_KEY          # e.g. output of: openssl rand -base64 48
