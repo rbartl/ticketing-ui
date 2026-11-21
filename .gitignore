@@ -3,3 +3,6 @@ build/
 broker/node_modules/
 broker/.wrangler/
 broker/.dev.vars
+.env
+.env.*
+*.secrets
