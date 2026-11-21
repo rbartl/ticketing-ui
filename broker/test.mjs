@@ -67,6 +67,10 @@ assert.equal(r.status, 400);
 r = await post("/token", { code: "good", state: `${evil}.${mac}`, verifier });
 assert.equal(r.status, 400);
 
+r = await post("/token", { code: "good", state: "a.b", verifier });
+assert.equal(r.status, 400);
+assert.equal((await r.json()).error_description, "invalid or expired state");
+
 // 6. expired state
 const realNow = Date.now;
 Date.now = () => realNow() + 11 * 60 * 1000;

@@ -6,6 +6,7 @@ compatibility_date = "2025-06-01"
 # (the zone edv-bartl.at must be active in this Cloudflare account).
 routes = [{ pattern = "jira-oauth.edv-bartl.at", custom_domain = true }]
 workers_dev = false
+preview_urls = false
 
 [vars]
 # Client ID of the OAuth 2.0 (3LO) app from developer.atlassian.com (not secret).

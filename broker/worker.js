@@ -148,6 +148,14 @@ async function sign(env, payload) {
 }
 
 async function verify(env, state) {
+  try {
+    return await verifyUnsafe(env, state);
+  } catch {
+    return null;  // malformed base64 / JSON -> just an invalid state
+  }
+}
+
+async function verifyUnsafe(env, state) {
   const [body, mac] = state.split(".");
   if (!body || !mac || !B64URL.test(body) || !B64URL.test(mac)) return null;
   const ok = await crypto.subtle.verify("HMAC", await hmacKey(env), unb64url(mac),
