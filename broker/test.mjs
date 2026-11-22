@@ -92,5 +92,9 @@ const page = await r.text();
 assert.ok(page.includes("mailto:a@b.at") && page.includes("Cloudflare") && page.includes('id="en"'));
 assert.ok(!page.includes("<x>") && page.includes("&lt;x&gt;"));
 assert.equal((await call("/datenschutz")).status, 200);
+assert.equal((await call("/privacy/")).status, 200, "trailing slash");
+r = await worker.fetch(new Request(B + "/privacy", { method: "HEAD" }), {});
+assert.equal(r.status, 200, "HEAD for link checkers");
+assert.match(r.headers.get("content-type"), /text\/html/);
 
 console.log("broker: all tests passed");

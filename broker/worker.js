@@ -26,8 +26,12 @@ const B64URL = /^[A-Za-z0-9_-]+$/;
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
-    if (request.method === "GET" && (url.pathname === "/privacy" || url.pathname === "/datenschutz"))
-      return privacyPage(env);
+    // HEAD too: link checkers (e.g. the developer console's privacy URL check) probe with HEAD first.
+    const path = url.pathname.replace(/\/+$/, "");
+    if ((request.method === "GET" || request.method === "HEAD") && (path === "/privacy" || path === "/datenschutz")) {
+      const page = privacyPage(env);
+      return request.method === "HEAD" ? new Response(null, page) : page;
+    }
     try {
       if (!env.ATLASSIAN_CLIENT_ID || !env.ATLASSIAN_CLIENT_SECRET || !env.STATE_KEY)
         return json({ error: "server_error", error_description: "broker not configured" }, 500);
