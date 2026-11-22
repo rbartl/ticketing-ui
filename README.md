@@ -19,7 +19,7 @@ Jira Cloud ──(SyncEngine, Hintergrund)──► SQLite + FTS5 (pro Konto) �
   im Hintergrund aktualisiert (frühestens alle 30 s je Issue).
 - **Suche**: Lokal per FTS5 (Key, Titel, Beschreibung, Labels) bei jedem Tastendruck. Nach 350 ms Pause zusätzlich
   `text ~ "…" AND NOT (<Bereich>)` in der Cloud. Die Treffer werden mit ☁ markiert angehängt.
-- **Mehrere Konten**: eigene DB je Konto, alle synchronisieren parallel. Anmeldung per OAuth oder API-Token, Geheimnisse im OS-Schlüsselbund (QtKeychain).
+- **Mehrere Konten**: eigene DB je Konto, alle synchronisieren parallel. Anmeldung per API-Token oder OAuth, Geheimnisse in `secrets.json` im Datenverzeichnis (nur für den Benutzer lesbar; kein OS-Schlüsselbund, der auf macOS nach jedem Neubau nach dem Passwort fragt).
 
 | Datei | Inhalt |
 |---|---|
@@ -34,16 +34,19 @@ Jira Cloud ──(SyncEngine, Hintergrund)──► SQLite + FTS5 (pro Konto) �
 
 ## Anmeldung
 
-Pro Konto (= Jira-Site) wählbar, beliebig gemischt (Menü „+ Konto“):
+Pro Konto (= Jira-Site) wählbar, beliebig gemischt (Menü „+ Konto“, öffnet sich im Hauptfenster):
 
-1. **Mit Atlassian anmelden (OAuth 2.0)**: Der Browser öffnet die Atlassian-Anmeldung, die App empfängt die
-   Antwort auf `http://localhost:47823/callback`.
+1. **API-Token** (Standard): E-Mail + Token von [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens).
+   Funktioniert ohne Freigabe durch die Firma.
+2. **Mit Atlassian anmelden (OAuth 2.0)**: Der Browser öffnet die Atlassian-Anmeldung, die App empfängt die
+   Antwort auf `http://localhost:<port>/callback` (mit Broker ein freier Port, ohne Broker 47823). Die Anmeldung
+   bleibt im Hauptfenster offen, bis sie fertig ist; der Link lässt sich kopieren, um ihn in einem anderen Browser zu öffnen.
+   Setzt voraus, dass die jeweilige Firma die OAuth-App zulässt.
    - **Mehrere Identitäten**: eigene Adresse und Kunden-Adressen nebeneinander. Je Atlassian-Benutzer eine
-     Session (Refresh-Token rotierend, im Schlüsselbund unter `oauth:<accountId>`), geteilt von allen Sites
+     Session (Refresh-Token rotierend, in `secrets.json` unter `oauth:<accountId>`), geteilt von allen Sites
      dieses Benutzers. Für ein anderes Konto im Browser das Atlassian-Konto wechseln oder ein privates Fenster nutzen.
    - **Weitere Site desselben Benutzers**: erneut anmelden und auf der Zustimmungsseite die andere Site wählen.
    - API-Aufrufe laufen über `https://api.atlassian.com/ex/jira/<cloudId>`.
-2. **API-Token**: E-Mail + Token von id.atlassian.com (Ausweichweg, z. B. wenn ein Kunde OAuth-Apps sperrt).
 
 ### OAuth-App einmalig registrieren
 
@@ -109,23 +112,23 @@ oder ohne Broker (eigene App, Secret lokal):
 
 ## Bauen
 
-Benötigt: Qt ≥ 6.4 (Widgets, Network, Sql + SQLite-Treiber), QtKeychain (Qt 6), CMake ≥ 3.21.
+Benötigt: Qt ≥ 6.4 (Widgets, Network, Sql + SQLite-Treiber), CMake ≥ 3.21.
 
 **Debian/Ubuntu**
 ```sh
-sudo apt install cmake ninja-build qt6-base-dev libqt6sql6-sqlite qtkeychain-qt6-dev
+sudo apt install cmake ninja-build qt6-base-dev libqt6sql6-sqlite
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
 ./build/jira-client
 ```
 
 **macOS**
 ```sh
-brew install qt qtkeychain cmake ninja
+brew install qt cmake ninja
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
 cmake --build build && macdeployqt build/jira-client.app
 ```
 
-**Windows**: Qt 6 über den Qt Online Installer (MSVC), QtKeychain über vcpkg (`vcpkg install qtkeychain-qt6`),
+**Windows**: Qt 6 über den Qt Online Installer (MSVC),
 dann mit CMake bauen und `windeployqt` ausführen.
 
 Daten liegen unter dem `AppDataLocation` von Qt (Linux: `~/.local/share/edvbartl/jira-client/`).

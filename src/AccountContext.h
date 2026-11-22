@@ -17,8 +17,10 @@ public:
     AccountContext(const Account &account, AuthProvider *auth, QObject *parent = nullptr);
 
     bool open(QString *err);
+    void update(const Account &account);  // edited name / sync scope (same site, same db)
 
     const Account &account() const { return m_account; }
+    AuthProvider *auth() const { return m_auth; }
     Database &db() { return m_db; }
     SyncEngine &sync() { return *m_sync; }
     QString me() const { return m_db.state("me"); }
@@ -36,6 +38,7 @@ private:
                           std::function<void(bool ok)> done);
 
     Account m_account;
+    AuthProvider *m_auth;
     JiraClient *m_client = nullptr;
     Database m_db;
     SyncEngine *m_sync = nullptr;

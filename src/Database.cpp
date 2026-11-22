@@ -12,7 +12,7 @@
 namespace {
 
 const QString kCols = "i.id,i.key,i.summary,i.status,i.status_cat,i.assignee,i.priority,"
-                      "i.issue_type,i.updated,i.rank,i.in_scope";
+                      "i.issue_type,i.updated,i.rank,i.in_scope,i.project,i.reporter,i.labels,i.created";
 
 IssueRow readRow(const QSqlQuery &q)
 {
@@ -28,6 +28,10 @@ IssueRow readRow(const QSqlQuery &q)
     r.updated = q.value(8).toString();
     r.rank = q.value(9).toString();
     r.inScope = q.value(10).toInt() != 0;
+    r.project = q.value(11).toString();
+    r.reporter = q.value(12).toString();
+    r.labels = q.value(13).toString();
+    r.created = q.value(14).toString();
     return r;
 }
 
@@ -164,6 +168,13 @@ IssueRow Database::rowFromJson(const QJsonObject &issue)
     r.priority = f["priority"].toObject()["name"].toString();
     r.issueType = f["issuetype"].toObject()["name"].toString();
     r.updated = toUtcIso(f["updated"].toString());
+    r.project = f["project"].toObject()["key"].toString();
+    r.reporter = f["reporter"].toObject()["displayName"].toString();
+    r.created = toUtcIso(f["created"].toString());
+    QStringList labels;
+    for (const auto &l : f["labels"].toArray())
+        labels << l.toString();
+    r.labels = labels.join(' ');
     return r;
 }
 
@@ -318,7 +329,7 @@ QList<IssueRow> Database::myOpen(const QString &accountId, int limit) const
 std::optional<IssueDetail> Database::issue(const QString &key) const
 {
     QSqlQuery q(db());
-    q.prepare("SELECT " + kCols + ",i.project,i.reporter,i.labels,i.created,i.description_html"
+    q.prepare("SELECT " + kCols + ",i.description_html"
               " FROM issues i WHERE i.key=?");
     q.addBindValue(key);
     q.exec();
@@ -326,10 +337,6 @@ std::optional<IssueDetail> Database::issue(const QString &key) const
         return std::nullopt;
     IssueDetail d;
     static_cast<IssueRow &>(d) = readRow(q);
-    d.project = q.value(11).toString();
-    d.reporter = q.value(12).toString();
-    d.labels = q.value(13).toString();
-    d.created = q.value(14).toString();
     d.descriptionHtml = q.value(15).toString();
     return d;
 }

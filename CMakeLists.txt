@@ -6,7 +6,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_AUTOMOC ON)
 
 find_package(Qt6 6.4 REQUIRED COMPONENTS Widgets Network Sql)
-find_package(Qt6Keychain REQUIRED)
 
 qt_add_executable(jira-client WIN32 MACOSX_BUNDLE
     src/main.cpp
@@ -18,7 +17,7 @@ qt_add_executable(jira-client WIN32 MACOSX_BUNDLE
     src/SyncEngine.h         src/SyncEngine.cpp
     src/AccountContext.h     src/AccountContext.cpp
     src/IssueListModel.h     src/IssueListModel.cpp
-    src/AccountDialog.h      src/AccountDialog.cpp
+    src/AccountPanel.h       src/AccountPanel.cpp
     src/MainWindow.h         src/MainWindow.cpp
 )
 
@@ -32,4 +31,4 @@ target_compile_definitions(jira-client PRIVATE
     JIRA_OAUTH_CLIENT_ID="${JIRA_OAUTH_CLIENT_ID}"
     JIRA_OAUTH_CLIENT_SECRET="${JIRA_OAUTH_CLIENT_SECRET}")
 
-target_link_libraries(jira-client PRIVATE Qt6::Widgets Qt6::Network Qt6::Sql qt6keychain)
+target_link_libraries(jira-client PRIVATE Qt6::Widgets Qt6::Network Qt6::Sql)

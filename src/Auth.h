@@ -5,6 +5,7 @@
 #include <QNetworkAccessManager>
 #include <QObject>
 #include <QTimer>
+#include <QUrl>
 #include <QUrlQuery>
 #include <functional>
 
@@ -28,6 +29,7 @@ class BasicAuth : public AuthProvider {
 public:
     BasicAuth(const QString &email, const QString &token, QObject *parent = nullptr);
     void authorize(HeaderCb cb) override;
+    void setCredentials(const QString &email, const QString &token);
 
 private:
     QByteArray m_header;
@@ -40,7 +42,10 @@ private:
 // <AppData>/oauth.json {"broker_url","client_id","client_secret","port"} overrides them.
 struct OAuthConfig {
     QString brokerUrl, clientId, clientSecret;
-    int port = 47823;
+    // Broker: 0 = any free port, so a login can be restarted while the old one still listens.
+    // Direct mode: must match the callback URL registered in the developer console.
+    int port = 0;
+    static constexpr int kDirectPort = 47823;
 
     bool useBroker() const { return !brokerUrl.isEmpty(); }
     bool isValid() const { return useBroker() || (!clientId.isEmpty() && !clientSecret.isEmpty()); }
@@ -62,7 +67,7 @@ public:
     OAuthSession(const QString &atlassianAccountId, QObject *parent = nullptr);
 
     QString accountId() const { return m_accountId; }
-    void load();  // from the OS keychain
+    void load();  // from secrets.json
     bool isLoggedIn() const { return !m_refresh.isEmpty(); }
     void setTokens(const QJsonObject &tokenResponse);
 
@@ -76,7 +81,7 @@ signals:
 private:
     void refresh();
     void persist();
-    QString keychainKey() const { return "oauth:" + m_accountId; }
+    QString secretKey() const { return "oauth:" + m_accountId; }
 
     QString m_accountId;
     QNetworkAccessManager m_nam;
@@ -86,15 +91,18 @@ private:
     QList<HeaderCb> m_waiting;
 };
 
-// Browser login: opens the Atlassian consent page (via broker or directly), receives the
-// result on http://localhost:<port>/callback, gets tokens, the identity and its Jira sites.
+// Browser login: url() is the Atlassian consent page (via broker or directly) for the browser,
+// the result arrives on http://localhost:<port>/callback, then tokens, identity and Jira sites are loaded.
 class OAuthLogin : public QObject {
     Q_OBJECT
 public:
     explicit OAuthLogin(QObject *parent = nullptr);
-    bool start(QString *err);
+    bool start(QString *err);  // listens on localhost, does not open the browser
+    QUrl url() const { return m_url; }
+    void cancel();  // stops listening, no further signals, deletes itself
 
 signals:
+    void callbackReceived();  // browser came back, tokens are being fetched
     void succeeded(const QJsonObject &tokens, const OAuthIdentity &identity, const QJsonArray &jiraSites);
     void failed(const QString &error);
 
@@ -107,6 +115,7 @@ private:
                 const QJsonArray &sites = {});
 
     OAuthConfig m_cfg;
+    QUrl m_url;
     QString m_state;     // our CSRF state, comes back on the localhost callback
     QString m_verifier;  // PKCE verifier (broker mode)
     QList<QTcpServer *> m_servers;

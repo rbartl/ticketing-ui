@@ -29,7 +29,7 @@ export function privacyPage(env) {
 <ul>
   <li>Die App ruft Jira-Daten (z. B. Vorgänge, Sprints, Kommentare, Namen und E-Mail-Adressen von Beteiligten)
       <b>direkt</b> von den Atlassian-Servern ab und speichert sie als Cache <b>nur lokal</b> auf dem Gerät.</li>
-  <li>Zugangsdaten (OAuth-Tokens bzw. API-Tokens) werden im Schlüsselbund des Betriebssystems gespeichert.</li>
+  <li>Zugangsdaten (OAuth-Tokens bzw. API-Tokens) werden nur lokal auf dem Gerät gespeichert (Datei im App-Datenverzeichnis, nur für den Benutzer lesbar).</li>
   <li>Es werden <b>keine</b> Jira-Inhalte an ${vendor} oder sonstige Dritte übermittelt. Es gibt keine
       Analyse-, Tracking- oder Werbefunktionen.</li>
   <li>Die lokalen Daten bleiben, bis sie in der App bzw. durch Löschen des App-Datenverzeichnisses entfernt werden.
@@ -83,7 +83,7 @@ OAuth 2.0 sign-in with Atlassian.</p>
 <ul>
   <li>The app retrieves Jira data (e.g. issues, sprints, comments, names and email addresses of participants)
       <b>directly</b> from Atlassian and caches it <b>only locally</b> on the device.</li>
-  <li>Credentials (OAuth or API tokens) are stored in the operating system's keychain.</li>
+  <li>Credentials (OAuth or API tokens) are stored only locally on the device (a file in the app data directory, readable only by the user).</li>
   <li><b>No</b> Jira content is transmitted to ${vendor} or any other third party. There is no analytics,
       tracking or advertising.</li>
   <li>Local data is kept until it is removed in the app or by deleting the app's data directory. Issues outside

@@ -3,7 +3,6 @@
 
 #include <QCryptographicHash>
 #include <QDateTime>
-#include <QDesktopServices>
 #include <QFile>
 #include <QJsonDocument>
 #include <QNetworkReply>
@@ -111,6 +110,11 @@ BasicAuth::BasicAuth(const QString &email, const QString &token, QObject *parent
 
 void BasicAuth::authorize(HeaderCb cb) { cb(m_header, {}); }
 
+void BasicAuth::setCredentials(const QString &email, const QString &token)
+{
+    m_header = "Basic " + (email + ':' + token).toUtf8().toBase64();
+}
+
 // OAuthConfig -------------------------------------------------------------------
 
 OAuthConfig OAuthConfig::load()
@@ -127,6 +131,8 @@ OAuthConfig OAuthConfig::load()
         c.clientSecret = o["client_secret"].toString(c.clientSecret);
         c.port = o["port"].toInt(c.port);
     }
+    if (!c.useBroker() && c.port == 0)
+        c.port = kDirectPort;
     return c;
 }
 
@@ -145,7 +151,7 @@ OAuthSession::OAuthSession(const QString &atlassianAccountId, QObject *parent)
 
 void OAuthSession::load()
 {
-    const auto o = QJsonDocument::fromJson(AccountStore::readToken(keychainKey()).toUtf8()).object();
+    const auto o = QJsonDocument::fromJson(AccountStore::readToken(secretKey()).toUtf8()).object();
     m_refresh = o["refresh_token"].toString();
     m_access = o["access_token"].toString();
     m_expiresAt = o["expires_at"].toString().toLongLong();
@@ -158,7 +164,7 @@ void OAuthSession::persist()
         {"access_token", m_access},
         {"expires_at", QString::number(m_expiresAt)},
     };
-    AccountStore::writeSecretAsync(keychainKey(), QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)));
+    AccountStore::writeToken(secretKey(), QString::fromUtf8(QJsonDocument(o).toJson(QJsonDocument::Compact)));
 }
 
 void OAuthSession::setTokens(const QJsonObject &t)
@@ -217,7 +223,7 @@ void OAuthSession::refresh()
 OAuthLogin::OAuthLogin(QObject *parent) : QObject(parent)
 {
     m_timeout.setSingleShot(true);
-    m_timeout.setInterval(5 * 60 * 1000);
+    m_timeout.setInterval(10 * 60 * 1000);  // = STATE_TTL_SECONDS of the broker
     connect(&m_timeout, &QTimer::timeout, this, [this] { finish("Zeitüberschreitung bei der Anmeldung"); });
 }
 
@@ -230,13 +236,15 @@ bool OAuthLogin::start(QString *err)
                "  \"client_id\" + \"client_secret\" (eigene App)\neintragen.";
         return false;
     }
-    // "localhost" may resolve to ::1 or 127.0.0.1 -> listen on both, loopback only.
+    // "localhost" may resolve to ::1 or 127.0.0.1 -> listen on both (same port), loopback only.
+    quint16 port = quint16(m_cfg.port);  // 0 = any free port
     for (const auto &addr : {QHostAddress(QHostAddress::LocalHost), QHostAddress(QHostAddress::LocalHostIPv6)}) {
         auto *server = new QTcpServer(this);
-        if (!server->listen(addr, quint16(m_cfg.port))) {
+        if (!server->listen(addr, port)) {
             delete server;
             continue;
         }
+        port = server->serverPort();
         connect(server, &QTcpServer::newConnection, this, [this, server] {
             while (QTcpSocket *s = server->nextPendingConnection()) {
                 connect(s, &QTcpSocket::readyRead, this, [this, s] { onReadyRead(s); });
@@ -245,13 +253,14 @@ bool OAuthLogin::start(QString *err)
         });
         m_servers << server;
     }
+    m_cfg.port = port;
     if (m_servers.isEmpty()) {
         *err = QString("Port %1 ist belegt – in oauth.json einen anderen \"port\" setzen.").arg(m_cfg.port);
         return false;
     }
 
     m_state = randomUrlSafe(24);
-    QUrl url;
+    QUrl &url = m_url;
     if (m_cfg.useBroker()) {
         m_verifier = randomUrlSafe(32);
         QString base = m_cfg.brokerUrl;
@@ -275,12 +284,17 @@ bool OAuthLogin::start(QString *err)
             {"prompt", "consent"},
         });
     }
-    if (!QDesktopServices::openUrl(url)) {
-        *err = "Browser konnte nicht geöffnet werden:\n" + url.toString();
-        return false;
-    }
     m_timeout.start();
     return true;
+}
+
+void OAuthLogin::cancel()
+{
+    m_finished = m_done = true;
+    m_timeout.stop();
+    for (auto *s : m_servers)
+        s->close();
+    deleteLater();
 }
 
 void OAuthLogin::onReadyRead(QTcpSocket *socket)
@@ -317,6 +331,7 @@ void OAuthLogin::onReadyRead(QTcpSocket *socket)
         return;
     }
     respond(socket, 200, "<h2>Angemeldet ✔</h2><p>Du kannst dieses Fenster schließen und zum Jira Client zurückkehren.</p>");
+    emit callbackReceived();
     exchange(q);
 }
 

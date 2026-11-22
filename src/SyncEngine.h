@@ -20,6 +20,7 @@ public:
 
     void start();
     void syncNow();
+    void setScope(const QString &scopeJql);  // account edited -> full resync + reconcile
 
     QStringList fields() const;
     FieldIds fieldIds() const { return m_fields; }
@@ -32,6 +33,7 @@ signals:
 
 private:
     void setStatus(const QString &s);
+    void resetForScope();
     void bootstrap(std::function<void()> next);
     void fetchPages(const QString &jql, const QString &token, int total, bool full,
                     std::function<void(bool ok, int count, QString err)> done);

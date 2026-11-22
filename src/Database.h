@@ -18,12 +18,13 @@ struct FieldIds {
 struct IssueRow {
     qint64 id = 0;
     QString key, summary, status, statusCat, assignee, priority, issueType, updated, rank;
+    QString project, reporter, labels, created;  // labels space separated
     bool inScope = true;
     bool cloud = false;  // result of the cloud fallback search, not stored locally
 };
 
 struct IssueDetail : IssueRow {
-    QString project, reporter, labels, created, descriptionHtml;
+    QString descriptionHtml;
 };
 
 struct SprintInfo {

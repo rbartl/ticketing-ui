@@ -1,15 +1,12 @@
 #include "Account.h"
 
 #include <QDir>
-#include <QEventLoop>
 #include <QFile>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QSaveFile>
 #include <QStandardPaths>
-#include <qt6keychain/keychain.h>
-
-static const char *kKeychainService = "jira-client";
 
 QString Account::scopeJql() const
 {
@@ -24,6 +21,8 @@ QString Account::scopeJql() const
         parts << "(" + extraJql.trimmed() + ")";
     if (parts.isEmpty())
         parts << "assignee = currentUser()";
+    if (maxAgeDays > 0)  // relative => the scope string stays the same, no resync every day
+        return "(" + parts.join(" OR ") + QString(") AND updated >= -%1d").arg(maxAgeDays);
     return parts.join(" OR ");
 }
 
@@ -55,6 +54,7 @@ QList<Account> AccountStore::load()
         for (const auto &p : o["projects"].toArray())
             a.projects << p.toString();
         a.extraJql = o["extraJql"].toString();
+        a.maxAgeDays = o["maxAgeDays"].toInt(0);
         a.authType = o["auth"].toString("token");
         a.cloudId = o["cloudId"].toString();
         a.oauthUser = o["oauthUser"].toString();
@@ -74,6 +74,7 @@ void AccountStore::save(const QList<Account> &accounts)
             {"email", a.email},
             {"projects", QJsonArray::fromStringList(a.projects)},
             {"extraJql", a.extraJql},
+            {"maxAgeDays", a.maxAgeDays},
             {"auth", a.authType},
             {"cloudId", a.cloudId},
             {"oauthUser", a.oauthUser},
@@ -84,38 +85,38 @@ void AccountStore::save(const QList<Account> &accounts)
         f.write(QJsonDocument(arr).toJson());
 }
 
-QString AccountStore::readToken(const QString &accountId)
+// Secrets (API tokens, OAuth sessions) live in <AppData>/secrets.json, readable only by the user.
+// Not in the OS keychain: on macOS every rebuild changes the code signature and the keychain asks
+// for the password again and again.
+static QString secretsPath() { return AccountStore::dataDir() + "/secrets.json"; }
+
+static QJsonObject readSecrets()
 {
-    QKeychain::ReadPasswordJob job(kKeychainService);
-    job.setAutoDelete(false);
-    job.setKey(accountId);
-    QEventLoop loop;
-    QObject::connect(&job, &QKeychain::Job::finished, &loop, &QEventLoop::quit);
-    job.start();
-    loop.exec();
-    return job.error() ? QString() : job.textData();
+    QFile f(secretsPath());
+    return f.open(QIODevice::ReadOnly) ? QJsonDocument::fromJson(f.readAll()).object() : QJsonObject();
 }
 
-bool AccountStore::writeToken(const QString &accountId, const QString &token, QString *err)
+QString AccountStore::readToken(const QString &key)
 {
-    QKeychain::WritePasswordJob job(kKeychainService);
-    job.setAutoDelete(false);
-    job.setKey(accountId);
-    job.setTextData(token);
-    QEventLoop loop;
-    QObject::connect(&job, &QKeychain::Job::finished, &loop, &QEventLoop::quit);
-    job.start();
-    loop.exec();
-    if (job.error() && err)
-        *err = job.errorString();
-    return !job.error();
+    return readSecrets()[key].toString();
 }
 
-void AccountStore::writeSecretAsync(const QString &key, const QString &value)
+bool AccountStore::writeToken(const QString &key, const QString &token, QString *err)
 {
-    auto *job = new QKeychain::WritePasswordJob(kKeychainService);
-    job->setAutoDelete(true);
-    job->setKey(key);
-    job->setTextData(value);
-    job->start();
+    QJsonObject all = readSecrets();
+    all[key] = token;
+    QSaveFile f(secretsPath());
+    if (!f.open(QIODevice::WriteOnly)) {
+        if (err)
+            *err = f.errorString();
+        return false;
+    }
+    f.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    f.write(QJsonDocument(all).toJson());
+    if (!f.commit()) {
+        if (err)
+            *err = f.errorString();
+        return false;
+    }
+    return true;
 }

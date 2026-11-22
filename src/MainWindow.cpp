@@ -1,12 +1,12 @@
 #include "MainWindow.h"
 #include "Account.h"
 #include "AccountContext.h"
-#include "AccountDialog.h"
+#include "AccountPanel.h"
 #include "Auth.h"
 #include "IssueListModel.h"
 #include "SyncEngine.h"
 
-#include <algorithm>
+#include <QButtonGroup>
 #include <QComboBox>
 #include <QDateTime>
 #include <QElapsedTimer>
@@ -16,20 +16,19 @@
 #include <QJsonObject>
 #include <QLineEdit>
 #include <QMenu>
-#include <QPushButton>
-#include <QMessageBox>
 #include <QScrollBar>
 #include <QShortcut>
 #include <QSignalBlocker>
+#include <QSettings>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QStatusBar>
-#include <QTabWidget>
 #include <QTableView>
 #include <QTextBrowser>
 #include <QToolBar>
 #include <QToolButton>
-#include <QUuid>
 #include <QVBoxLayout>
+#include <QHBoxLayout>
 
 static QString fmtTime(const QString &utcIso)
 {
@@ -49,48 +48,99 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
     m_accountBox->setMinimumWidth(180);
     tb->addWidget(m_accountBox);
     auto *addMenu = new QMenu(this);
-    addMenu->addAction("Mit Atlassian anmelden (Browser) …", this, &MainWindow::oauthLogin);
-    addMenu->addAction("Mit API-Token …", this, &MainWindow::addAccountDialog);
+    addMenu->addAction("Mit API-Token …", this, [this] {
+        showAccountPanel();
+        m_accountPanel->showTokenForm();
+    });
+    addMenu->addAction("Mit Atlassian anmelden (Browser) …", this, [this] {
+        showAccountPanel();
+        m_accountPanel->startOAuth();
+    });
     auto *addBtn = new QToolButton;
     addBtn->setText("+ Konto");
     addBtn->setMenu(addMenu);
     addBtn->setPopupMode(QToolButton::InstantPopup);
     tb->addWidget(addBtn);
+    auto *editBtn = new QToolButton;
+    editBtn->setText(QString::fromUtf8("⚙"));
+    editBtn->setToolTip("Konto bearbeiten: Name, Token, was lokal gespeichert wird");
+    connect(editBtn, &QToolButton::clicked, this, [this] {
+        if (!m_ctx)
+            return;
+        showAccountPanel();
+        m_accountPanel->showEditForm(m_ctx->account());
+    });
+    tb->addWidget(editBtn);
 
     tb->addSeparator();
     m_search = new QLineEdit;
-    m_search->setPlaceholderText("Suchen …  (Strg+L)   Key, Text, Label – leer = meine offenen Issues");
+    m_search->setPlaceholderText(QString("Suchen – Key, Text, Label  (%1)")
+                                     .arg(QKeySequence("Ctrl+L").toString(QKeySequence::NativeText)));
     m_search->setClearButtonEnabled(true);
     tb->addWidget(m_search);
-    auto *syncAct = tb->addAction("Sync", this, [this] { if (m_ctx) m_ctx->sync().syncNow(); });
+    auto *syncAct = tb->addAction(QString::fromUtf8("⟳"), this, [this] { if (m_ctx) m_ctx->sync().syncNow(); });
     syncAct->setShortcut(QKeySequence("Ctrl+R"));
+    syncAct->setToolTip(QString("Jetzt synchronisieren (%1)").arg(syncAct->shortcut().toString(QKeySequence::NativeText)));
 
-    // Left: search results + sprint view, right: detail -------------------------
+    // Left: bar [Tickets|Sprint] + list, right: detail ---------------------------
     m_resultModel = new IssueListModel(this);
     m_resultView = makeTable(m_resultModel);
-
-    auto *sprintPage = new QWidget;
-    auto *sprintLayout = new QVBoxLayout(sprintPage);
-    sprintLayout->setContentsMargins(0, 4, 0, 0);
-    m_sprintBox = new QComboBox;
     m_sprintModel = new IssueListModel(this);
     m_sprintView = makeTable(m_sprintModel);
-    sprintLayout->addWidget(m_sprintBox);
-    sprintLayout->addWidget(m_sprintView);
+    m_lists = new QStackedWidget;
+    m_lists->addWidget(m_resultView);
+    m_lists->addWidget(m_sprintView);
 
-    m_tabs = new QTabWidget;
-    m_tabs->addTab(m_resultView, "Suche");
-    m_tabs->addTab(sprintPage, "Sprint");
+    auto *bar = new QWidget;
+    auto *barLayout = new QHBoxLayout(bar);
+    barLayout->setContentsMargins(8, 6, 8, 6);
+    barLayout->setSpacing(4);
+    auto *modes = new QButtonGroup(this);
+    for (const QString &label : {QStringLiteral("Tickets"), QStringLiteral("Sprint")}) {
+        auto *b = new QToolButton;
+        b->setText(label);
+        b->setCheckable(true);
+        b->setAutoRaise(true);
+        b->setToolTip(QString("Tickets ↔ Sprint (%1)").arg(QKeySequence("Ctrl+T").toString(QKeySequence::NativeText)));
+        modes->addButton(b, int(modes->buttons().size()));
+        barLayout->addWidget(b);
+    }
+    modes->button(0)->setChecked(true);
+    m_modeButtons = modes;
+    barLayout->addSpacing(12);
+    m_listTitle = new QLabel;
+    m_sprintBox = new QComboBox;
+    m_sprintBox->setSizeAdjustPolicy(QComboBox::AdjustToContents);
+    m_sprintBox->hide();
+    barLayout->addWidget(m_listTitle);
+    barLayout->addWidget(m_sprintBox);
+    barLayout->addStretch();
+    connect(modes, &QButtonGroup::idClicked, this, &MainWindow::setListMode);
+
+    auto *left = new QWidget;
+    auto *leftLayout = new QVBoxLayout(left);
+    leftLayout->setContentsMargins(0, 0, 0, 0);
+    leftLayout->setSpacing(0);
+    leftLayout->addWidget(bar);
+    leftLayout->addWidget(m_lists);
 
     m_detail = new QTextBrowser;
     m_detail->setOpenExternalLinks(true);
+    m_detail->setFrameShape(QFrame::NoFrame);
+    m_detail->document()->setDocumentMargin(18);
 
     auto *split = new QSplitter;
-    split->addWidget(m_tabs);
+    split->setHandleWidth(1);
+    split->addWidget(left);
     split->addWidget(m_detail);
     split->setStretchFactor(0, 3);
     split->setStretchFactor(1, 2);
-    setCentralWidget(split);
+
+    m_accountPanel = new AccountPanel;
+    m_pages = new QStackedWidget;
+    m_pages->addWidget(split);
+    m_pages->addWidget(m_accountPanel);
+    setCentralWidget(m_pages);
 
     m_status = new QLabel;
     m_searchInfo = new QLabel;
@@ -115,12 +165,31 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
             m_cloudTimer.start();
     });
     connect(m_search, &QLineEdit::returnPressed, this, [this] {
-        m_tabs->setCurrentIndex(0);
+        setListMode(0);
         m_resultView->setFocus();
         if (m_resultModel->rowCount() > 0 && !m_resultView->currentIndex().isValid())
             m_resultView->setCurrentIndex(m_resultModel->index(0, 0));
     });
     connect(m_sprintBox, &QComboBox::currentIndexChanged, this, &MainWindow::showSprint);
+    m_accountPanel->setSessionProvider([this](const QString &user) { return oauthSession(user); });
+    connect(m_accountPanel, &AccountPanel::accountReady, this, &MainWindow::addAccount);
+    connect(m_accountPanel, &AccountPanel::accountUpdated, this, &MainWindow::updateAccount);
+    connect(m_accountPanel, &AccountPanel::closed, this, [this] {
+        if (m_contexts.isEmpty())
+            m_accountPanel->showChoice();  // nothing to go back to
+        else
+            m_pages->setCurrentIndex(0);
+    });
+    connect(m_accountPanel, &AccountPanel::oauthLoggedIn, this, [this](const QJsonObject &tokens, const OAuthIdentity &who) {
+        raise();
+        activateWindow();
+        oauthSession(who.accountId)->setTokens(tokens);
+        // Re-login of a known identity: its sites continue with the new tokens.
+        for (AccountContext *ctx : std::as_const(m_contexts))
+            if (ctx->account().isOAuth() && ctx->account().oauthUser == who.accountId)
+                ctx->sync().syncNow();
+        statusBar()->showMessage("Angemeldet als " + who.email, 5000);
+    });
 
     // Keyboard ------------------------------------------------------------------
     connect(new QShortcut(QKeySequence("Ctrl+L"), this), &QShortcut::activated, this, [this] {
@@ -143,7 +212,7 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
             m_search->selectAll();
         });
     connect(new QShortcut(QKeySequence("Ctrl+T"), this), &QShortcut::activated, this, [this] {
-        m_tabs->setCurrentIndex(1 - m_tabs->currentIndex());
+        setListMode(1 - m_lists->currentIndex());
     });
     for (int i = 0; i < 9; ++i)
         connect(new QShortcut(QKeySequence(QString("Ctrl+%1").arg(i + 1)), this), &QShortcut::activated, this,
@@ -159,20 +228,62 @@ QTableView *MainWindow::makeTable(IssueListModel *model)
     v->setSelectionBehavior(QAbstractItemView::SelectRows);
     v->setSelectionMode(QAbstractItemView::SingleSelection);
     v->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    v->setAlternatingRowColors(true);
+    v->setItemDelegate(new IssueDelegate(v));
     v->setShowGrid(false);
     v->setWordWrap(false);
+    v->setFrameShape(QFrame::NoFrame);
+    v->setIconSize(QSize(16, 16));
     v->verticalHeader()->hide();
     v->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
-    v->verticalHeader()->setDefaultSectionSize(v->fontMetrics().height() + 8);
+    v->verticalHeader()->setDefaultSectionSize(v->fontMetrics().height() + 14);
     auto *h = v->horizontalHeader();
+    h->setDefaultAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    h->setHighlightSections(false);
     h->setSectionResizeMode(QHeaderView::Interactive);
     h->setSectionResizeMode(IssueListModel::Summary, QHeaderView::Stretch);
-    h->resizeSection(IssueListModel::Key, 110);
-    h->resizeSection(IssueListModel::Type, 80);
-    h->resizeSection(IssueListModel::Status, 120);
+    h->resizeSection(IssueListModel::Key, 130);
+    h->resizeSection(IssueListModel::Type, 90);
+    h->resizeSection(IssueListModel::Status, 130);
+    h->resizeSection(IssueListModel::Priority, 90);
     h->resizeSection(IssueListModel::Assignee, 140);
-    h->resizeSection(IssueListModel::Updated, 110);
+    h->resizeSection(IssueListModel::Reporter, 140);
+    h->resizeSection(IssueListModel::Project, 80);
+    h->resizeSection(IssueListModel::Labels, 140);
+    h->resizeSection(IssueListModel::Created, 100);
+    h->resizeSection(IssueListModel::Updated, 100);
+
+    // Columns: right click on the header, same choice for all lists, remembered.
+    const QStringList hidden = QSettings().value("list/hiddenColumns", [] {
+        QStringList names;
+        for (int c : IssueListModel::defaultHidden())
+            names << IssueListModel::columnName(c);
+        return names;
+    }()).toStringList();
+    for (int c = 0; c < IssueListModel::ColumnCount; ++c)
+        h->setSectionHidden(c, hidden.contains(IssueListModel::columnName(c)));
+    h->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(h, &QHeaderView::customContextMenuRequested, this, [this, h](const QPoint &pos) {
+        QMenu menu;
+        menu.addSection("Spalten");
+        for (int c = 0; c < IssueListModel::ColumnCount; ++c) {
+            if (c == IssueListModel::Key || c == IssueListModel::Summary)
+                continue;
+            QAction *a = menu.addAction(IssueListModel::columnName(c));
+            a->setCheckable(true);
+            a->setChecked(!h->isSectionHidden(c));
+            connect(a, &QAction::toggled, this, [this, c](bool on) {
+                QStringList names;
+                for (QTableView *t : {m_resultView, m_sprintView}) {
+                    t->horizontalHeader()->setSectionHidden(c, !on);
+                }
+                for (int i = 0; i < IssueListModel::ColumnCount; ++i)
+                    if (m_resultView->horizontalHeader()->isSectionHidden(i))
+                        names << IssueListModel::columnName(i);
+                QSettings().setValue("list/hiddenColumns", names);
+            });
+        }
+        menu.exec(h->mapToGlobal(pos));
+    });
     connect(v->selectionModel(), &QItemSelectionModel::currentRowChanged, this,
             [this, model](const QModelIndex &cur) { if (cur.isValid()) openIssue(model->keyAt(cur.row())); });
     return v;
@@ -189,8 +300,20 @@ void MainWindow::loadAccounts()
         else
             addContext(a, new BasicAuth(a.email, AccountStore::readToken(a.id), this));
     }
-    if (m_contexts.isEmpty())
-        QTimer::singleShot(0, this, &MainWindow::firstRun);
+    // Tokens used to be in the OS keychain -> enter once again.
+    for (int i = 0; i < m_contexts.size(); ++i) {
+        const Account &a = m_contexts[i]->account();
+        if (!a.isOAuth() && AccountStore::readToken(a.id).isEmpty()) {
+            switchAccount(i);
+            showAccountPanel();
+            m_accountPanel->showEditForm(a);
+            break;
+        }
+    }
+    if (m_contexts.isEmpty()) {
+        showAccountPanel();
+        m_accountPanel->showChoice();
+    }
 }
 
 OAuthSession *MainWindow::oauthSession(const QString &atlassianAccountId)
@@ -211,85 +334,42 @@ OAuthSession *MainWindow::oauthSession(const QString &atlassianAccountId)
     return s;
 }
 
-void MainWindow::firstRun()
+void MainWindow::showAccountPanel()
 {
-    QMessageBox box(QMessageBox::Question, "Jira Client", "Wie möchtest du dich bei Jira Cloud anmelden?",
-                    QMessageBox::NoButton, this);
-    QPushButton *oauth = box.addButton("Mit Atlassian anmelden (Browser)", QMessageBox::AcceptRole);
-    QPushButton *token = box.addButton("Mit API-Token", QMessageBox::ActionRole);
-    box.addButton(QMessageBox::Cancel);
-    box.setDefaultButton(oauth);
-    box.exec();
-    if (box.clickedButton() == oauth)
-        oauthLogin();
-    else if (box.clickedButton() == token)
-        addAccountDialog();
+    m_accountPanel->setCancelable(!m_contexts.isEmpty());
+    m_pages->setCurrentWidget(m_accountPanel);
 }
 
-void MainWindow::oauthLogin()
+void MainWindow::addAccount(const Account &account, const QString &token)
 {
-    auto *login = new OAuthLogin(this);
-    QString err;
-    if (!login->start(&err)) {
-        delete login;
-        QMessageBox::warning(this, "Atlassian-Anmeldung", err);
-        return;
+    auto accounts = AccountStore::load();
+    accounts << account;
+    AccountStore::save(accounts);
+    if (account.isOAuth())
+        addContext(account, oauthSession(account.oauthUser));
+    else
+        addContext(account, new BasicAuth(account.email, token, this));
+    switchAccount(int(m_contexts.size()) - 1);
+}
+
+void MainWindow::updateAccount(const Account &account, const QString &token)
+{
+    auto accounts = AccountStore::load();
+    for (auto &a : accounts)
+        if (a.id == account.id)
+            a = account;
+    AccountStore::save(accounts);
+    for (int i = 0; i < m_contexts.size(); ++i) {
+        AccountContext *ctx = m_contexts[i];
+        if (ctx->account().id != account.id)
+            continue;
+        if (auto *basic = qobject_cast<BasicAuth *>(ctx->auth()))
+            basic->setCredentials(account.email, token.isEmpty() ? AccountStore::readToken(account.id) : token);
+        ctx->update(account);  // changed scope -> full resync
+        m_accountBox->setItemText(i, account.label());
+        if (ctx == m_ctx)
+            setWindowTitle("Jira Client – " + account.name);
     }
-    statusBar()->showMessage(QString::fromUtf8(
-        "Browser geöffnet – bei Atlassian anmelden und „Zulassen“ klicken. "
-        "Anderes Konto (z. B. Kunden-Adresse)? Im Browser oben rechts Konto wechseln oder privates Fenster nutzen."));
-
-    connect(login, &OAuthLogin::failed, this, [this](const QString &e) {
-        statusBar()->clearMessage();
-        QMessageBox::warning(this, "Atlassian-Anmeldung", e);
-    });
-    connect(login, &OAuthLogin::succeeded, this,
-            [this](const QJsonObject &tokens, const OAuthIdentity &who, const QJsonArray &sites) {
-        statusBar()->clearMessage();
-        raise();
-        activateWindow();
-        OAuthSession *session = oauthSession(who.accountId);
-        session->setTokens(tokens);
-
-        // Re-login of a known identity: its sites continue with the new tokens.
-        const QList<AccountContext *> existing = m_contexts;
-        for (AccountContext *ctx : existing)
-            if (ctx->account().isOAuth() && ctx->account().oauthUser == who.accountId)
-                ctx->sync().syncNow();
-
-        if (sites.isEmpty()) {
-            QMessageBox::information(this, "Atlassian-Anmeldung",
-                                     "Angemeldet als " + who.email +
-                                         ", aber für dieses Konto ist keine Jira-Site freigegeben.");
-            return;
-        }
-        auto accounts = AccountStore::load();
-        int added = 0;
-        for (const auto &v : sites) {
-            const auto site = v.toObject();
-            const QString cloudId = site["id"].toString();
-            const bool known = std::any_of(accounts.begin(), accounts.end(), [&](const Account &a) {
-                return a.isOAuth() && a.cloudId == cloudId && a.oauthUser == who.accountId;
-            });
-            if (known)
-                continue;
-            AccountDialog dlg(site["name"].toString(), site["url"].toString(), who.email, this);
-            if (dlg.exec() != QDialog::Accepted)
-                continue;
-            Account a = dlg.account();
-            a.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-            a.cloudId = cloudId;
-            a.baseUrl = site["url"].toString();
-            a.oauthUser = who.accountId;
-            a.email = who.email;
-            accounts << a;
-            AccountStore::save(accounts);
-            addContext(a, session);
-            ++added;
-        }
-        if (added)
-            switchAccount(int(m_contexts.size()) - 1);
-    });
 }
 
 void MainWindow::addContext(const Account &account, AuthProvider *auth)
@@ -297,7 +377,7 @@ void MainWindow::addContext(const Account &account, AuthProvider *auth)
     auto *ctx = new AccountContext(account, auth, this);
     QString err;
     if (!ctx->open(&err)) {
-        QMessageBox::warning(this, "Datenbank", account.name + ": " + err);
+        statusBar()->showMessage("Datenbank " + account.name + ": " + err);
         delete ctx;
         return;
     }
@@ -344,25 +424,6 @@ void MainWindow::switchAccount(int index)
     if (!m_search->text().trimmed().isEmpty())
         m_cloudTimer.start();
     reloadSprints();
-}
-
-void MainWindow::addAccountDialog()
-{
-    AccountDialog dlg(this);
-    if (dlg.exec() != QDialog::Accepted)
-        return;
-    Account a = dlg.account();
-    a.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
-    QString err;
-    if (!AccountStore::writeToken(a.id, dlg.token(), &err)) {
-        QMessageBox::warning(this, "Schlüsselbund", "Token konnte nicht gespeichert werden: " + err);
-        return;
-    }
-    auto accounts = AccountStore::load();
-    accounts << a;
-    AccountStore::save(accounts);
-    addContext(a, new BasicAuth(a.email, dlg.token(), this));
-    switchAccount(int(m_contexts.size()) - 1);
 }
 
 // Search: local first, cloud fallback appended ---------------------------------
@@ -420,6 +481,26 @@ void MainWindow::applyResults()
     m_resultModel->setRows(merged);
     reselect(m_resultView, m_resultModel);
     updateSearchInfo();
+    updateListTitle();
+}
+
+void MainWindow::setListMode(int mode)
+{
+    m_lists->setCurrentIndex(mode);
+    m_modeButtons->button(mode)->setChecked(true);
+    m_listTitle->setVisible(mode == 0);
+    m_sprintBox->setVisible(mode == 1);
+    if (mode == 1 && m_sprintBox->count() == 0)
+        m_sprintBox->setPlaceholderText("Kein offener Sprint");
+    updateListTitle();
+}
+
+void MainWindow::updateListTitle()
+{
+    const int n = m_resultModel->rowCount();
+    const QString q = m_search->text().trimmed();
+    m_listTitle->setText(q.isEmpty() ? QString("<b>Meine offenen Tickets</b> · %1").arg(n)
+                                     : QString("<b>%1 Treffer</b>").arg(n));
 }
 
 void MainWindow::updateSearchInfo()
@@ -534,35 +615,63 @@ void MainWindow::renderDetail()
     const bool sameIssue = m_renderedKey == key;
     const int scroll = m_detail->verticalScrollBar()->value();
 
-    QString h;
-    h += QString("<h2><a href=\"%1\">%2</a> %3</h2>")
-             .arg(m_ctx->browseUrl(key).toHtmlEscaped(), key.toHtmlEscaped(), d->summary.toHtmlEscaped());
-    h += "<table cellspacing='0' cellpadding='2'>";
-    auto row = [&h](const QString &label, const QString &value) {
-        if (!value.isEmpty())
-            h += "<tr><td><font color='gray'>" + label + "</font></td><td>" + value.toHtmlEscaped() + "</td></tr>";
+    // Colors from the palette -> works in light and dark mode.
+    const QPalette pal = m_detail->palette();
+    const QString muted = pal.color(QPalette::PlaceholderText).name();
+    const QString card = pal.color(QPalette::AlternateBase).name();
+    auto heading = [&muted](const QString &t) {
+        return "<p style='margin-top:22px; margin-bottom:6px; color:" + muted +
+               "; font-size:small; font-weight:600'>" + t.toUpper() + "</p>";
     };
-    row("Status", d->status);
-    row("Typ", d->issueType);
-    row("Priorität", d->priority);
-    row("Zugewiesen", d->assignee.isEmpty() ? QStringLiteral("—") : d->assignee);
-    row("Melder", d->reporter);
-    row("Labels", d->labels);
-    row("Erstellt", fmtTime(d->created));
-    row("Geändert", fmtTime(d->updated));
-    if (!d->inScope)
-        row("Quelle", QString::fromUtf8("Cache (außerhalb des Sync-Bereichs)"));
-    h += "</table><hr>";
-    h += d->descriptionHtml.isEmpty() ? QString("<p><i>Keine Beschreibung</i></p>") : d->descriptionHtml;
+    auto pill = [](const QString &text, const QColor &c) {
+        return QString("<span style='background-color:%1; color:white; font-size:small; font-weight:600'>"
+                       "&nbsp;%2&nbsp;</span>").arg(c.name(), text.toUpper().toHtmlEscaped());
+    };
+    auto label = [&muted](const QString &t) {
+        return "<td width='18%' style='color:" + muted + "'>" + t + "</td>";
+    };
+    auto value = [](const QString &v) {
+        return "<td width='32%'>" + (v.isEmpty() ? QStringLiteral("—") : v) + "</td>";
+    };
+
+    QString h;
+    h += QString("<p style='margin:0; color:%1'><span style='color:%2'>&#9632;</span> %3 &nbsp;·&nbsp; "
+                 "<a href=\"%4\">%5</a>%6</p>")
+             .arg(muted, IssueStyle::typeColor(d->issueType).name(), d->issueType.toHtmlEscaped(),
+                  m_ctx->browseUrl(key).toHtmlEscaped(), key.toHtmlEscaped(),
+                  d->inScope ? QString() : QString::fromUtf8(" &nbsp;·&nbsp; Cache (nicht im Sync-Bereich)"));
+    h += "<p style='margin-top:6px; margin-bottom:14px; font-size:17pt; font-weight:600'>" +
+         d->summary.toHtmlEscaped() + "</p>";
+
+    h += "<table width='100%' cellspacing='0' cellpadding='4'>";
+    h += "<tr>" + label("Status") + value(pill(d->status, IssueStyle::statusColor(d->statusCat))) +
+         label("Priorität") + value(d->priority.toHtmlEscaped()) + "</tr>";
+    h += "<tr>" + label("Zugewiesen") + value(d->assignee.toHtmlEscaped()) + label("Melder") +
+         value(d->reporter.toHtmlEscaped()) + "</tr>";
+    h += "<tr>" + label("Erstellt") + value(IssueStyle::fullTime(d->created)) + label("Geändert") +
+         value(IssueStyle::fullTime(d->updated)) + "</tr>";
+    if (!d->labels.isEmpty()) {
+        QString chips;
+        for (const auto &l : d->labels.split(' ', Qt::SkipEmptyParts))
+            chips += "<span style='background-color:" + card + "'>&nbsp;" + l.toHtmlEscaped() + "&nbsp;</span> ";
+        h += "<tr>" + label("Labels") + "<td colspan='3'>" + chips + "</td></tr>";
+    }
+    h += "</table>";
+
+    h += heading("Beschreibung");
+    h += d->descriptionHtml.isEmpty() ? "<p style='color:" + muted + "'>Keine Beschreibung</p>" : d->descriptionHtml;
 
     const auto comments = m_ctx->db().comments(key);
     const bool fetched = m_ctx->db().commentsFetchedAt(key) > 0;
-    h += QString("<h3>Kommentare (%1)</h3>").arg(fetched ? QString::number(comments.size()) : QStringLiteral("…"));
+    h += heading(fetched ? QString("Kommentare · %1").arg(comments.size()) : QStringLiteral("Kommentare"));
     if (!fetched)
-        h += QString::fromUtf8("<p><i>Lade Kommentare …</i></p>");
+        h += QString::fromUtf8("<p style='color:%1'>Lade …</p>").arg(muted);
+    else if (comments.isEmpty())
+        h += "<p style='color:" + muted + "'>Noch keine Kommentare</p>";
     for (const auto &c : comments) {
-        h += "<p><b>" + c.author.toHtmlEscaped() + "</b> <font color='gray'>" + fmtTime(c.created) +
-             "</font></p>" + c.html + "<hr>";
+        h += "<table width='100%' cellspacing='0' cellpadding='10' style='margin-bottom:8px'><tr><td bgcolor='" + card +
+             "'><b>" + c.author.toHtmlEscaped() + "</b> &nbsp;<span style='color:" + muted + "'>" +
+             IssueStyle::relativeTime(c.created) + "</span>" + c.html + "</td></tr></table>";
     }
 
     m_detail->setHtml(h);

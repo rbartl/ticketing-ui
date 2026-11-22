@@ -37,13 +37,28 @@ void SyncEngine::setStatus(const QString &s)
 void SyncEngine::start()
 {
     // Scope changed since last run -> full resync.
-    if (m_db->state("scope") != m_scope) {
-        m_db->setState("scope", m_scope);
-        m_db->setState("full_done", "0");
-    }
+    if (m_db->state("scope") != m_scope)
+        resetForScope();
     m_db->evictCache(kCacheDays);
     m_timer.start();
     syncNow();
+}
+
+void SyncEngine::setScope(const QString &scopeJql)
+{
+    if (scopeJql == m_scope)
+        return;
+    m_scope = scopeJql;
+    resetForScope();
+    syncNow();  // if a sync is running, it notices the new scope when done and starts over
+}
+
+// Full download of the new scope; reconcile right after it moves issues that left the scope into the cache.
+void SyncEngine::resetForScope()
+{
+    m_db->setState("scope", m_scope);
+    m_db->setState("full_done", "0");
+    m_db->setState("last_reconcile", "0");
 }
 
 // Discover site-specific custom fields (Sprint, Rank) and our own accountId.
@@ -104,8 +119,12 @@ void SyncEngine::syncNow()
     if (full)
         setStatus("Erstsync …");
 
-    fetchPages(jql, {}, 0, full, [this, full, started](bool ok, int count, const QString &err) {
+    fetchPages(jql, {}, 0, full, [this, full, started, scope = m_scope](bool ok, int count, const QString &err) {
         m_running = false;
+        if (scope != m_scope) {  // scope edited meanwhile
+            syncNow();
+            return;
+        }
         if (!ok) {
             setStatus("Offline/Fehler: " + err + " – nächster Versuch in 60 s");
             return;

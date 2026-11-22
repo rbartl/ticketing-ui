@@ -10,7 +10,7 @@
 static constexpr qint64 kCommentMinAgeSecs = 30;  // don't refetch faster than that
 
 AccountContext::AccountContext(const Account &account, AuthProvider *auth, QObject *parent)
-    : QObject(parent), m_account(account)
+    : QObject(parent), m_account(account), m_auth(auth)
 {
     m_client = new JiraClient(account.apiBase(), auth, this);
 }
@@ -21,6 +21,12 @@ bool AccountContext::open(QString *err)
         return false;
     m_sync = new SyncEngine(m_account.scopeJql(), m_client, &m_db, this);
     return true;
+}
+
+void AccountContext::update(const Account &account)
+{
+    m_account = account;
+    m_sync->setScope(account.scopeJql());
 }
 
 QString AccountContext::browseUrl(const QString &key) const
@@ -38,7 +44,7 @@ void AccountContext::searchCloud(const QString &text, std::function<void(QList<I
 
     if (keyRe.match(t).hasMatch()) {
         const QString key = t.toUpper();
-        m_client->get("/rest/api/3/issue/" + key, {{"fields", "summary,status,assignee,priority,issuetype,updated"}},
+        m_client->get("/rest/api/3/issue/" + key, {{"fields", "summary,status,assignee,priority,issuetype,updated,created,reporter,labels,project"}},
                       [cb](const QJsonDocument &doc, const QString &err) {
             if (!err.isEmpty())
                 cb({}, err.startsWith("HTTP 404") ? QString() : err);
@@ -51,7 +57,8 @@ void AccountContext::searchCloud(const QString &text, std::function<void(QList<I
     QString escaped = t;
     escaped.replace('\\', "\\\\").replace('"', "\\\"");
     const QString jql = QString("text ~ \"%1\" AND NOT (%2) ORDER BY updated DESC").arg(escaped, m_sync->scopeJql());
-    m_client->searchJql(jql, {"summary", "status", "assignee", "priority", "issuetype", "updated"}, 50, {},
+    m_client->searchJql(jql, {"summary", "status", "assignee", "priority", "issuetype", "updated", "created", "reporter",
+                                "labels", "project"}, 50, {},
                         [cb](const QJsonDocument &doc, const QString &err) {
         if (!err.isEmpty()) {
             cb({}, err);

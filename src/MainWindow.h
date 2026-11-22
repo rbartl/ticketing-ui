@@ -6,13 +6,14 @@
 #include <QTimer>
 
 class AccountContext;
+class AccountPanel;
 class AuthProvider;
 class OAuthSession;
 class IssueListModel;
 class QComboBox;
 class QLabel;
 class QLineEdit;
-class QTabWidget;
+class QStackedWidget;
 class QTableView;
 class QTextBrowser;
 struct Account;
@@ -27,15 +28,17 @@ private:
     void loadAccounts();
     void addContext(const Account &account, AuthProvider *auth);
     void switchAccount(int index);
-    void addAccountDialog();
-    void oauthLogin();
-    void firstRun();
+    void showAccountPanel();
+    void addAccount(const Account &account, const QString &token);
+    void updateAccount(const Account &account, const QString &token);
 
     void runLocalSearch();
     void runCloudSearch();
     void applyResults();
     void updateSearchInfo();
 
+    void setListMode(int mode);  // 0 tickets (search / my open), 1 sprint
+    void updateListTitle();
     void reloadSprints();
     void showSprint();
 
@@ -51,9 +54,13 @@ private:
     QList<AccountContext *> m_contexts;
     AccountContext *m_ctx = nullptr;
 
+    QStackedWidget *m_pages = nullptr;  // main view | account panel
+    AccountPanel *m_accountPanel = nullptr;
     QComboBox *m_accountBox = nullptr;
     QLineEdit *m_search = nullptr;
-    QTabWidget *m_tabs = nullptr;
+    QStackedWidget *m_lists = nullptr;
+    class QButtonGroup *m_modeButtons = nullptr;
+    QLabel *m_listTitle = nullptr;
     QTableView *m_resultView = nullptr;
     IssueListModel *m_resultModel = nullptr;
     QComboBox *m_sprintBox = nullptr;

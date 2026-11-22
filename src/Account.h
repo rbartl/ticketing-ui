@@ -3,7 +3,7 @@
 #include <QString>
 #include <QStringList>
 
-// One Jira Cloud site. The API token lives in the OS keychain, never in accounts.json.
+// One Jira Cloud site. The API token lives in secrets.json (see AccountStore), never in accounts.json.
 struct Account {
     QString id;        // uuid, also the name of the local db file
     QString name;      // display name
@@ -14,6 +14,7 @@ struct Account {
     QString oauthUser;      // only for OAuth: Atlassian account id = which login this site uses
     QStringList projects;  // project keys synced completely
     QString extraJql;      // additionally synced, e.g. "assignee = currentUser()"
+    int maxAgeDays = 0;    // only issues updated within that many days, 0 = no limit
 
     // JQL describing everything that is cloned locally.
     QString scopeJql() const;
@@ -28,7 +29,7 @@ public:
     static QString dataDir();
     static QList<Account> load();
     static void save(const QList<Account> &accounts);
-    static QString readToken(const QString &accountId);
-    static bool writeToken(const QString &accountId, const QString &token, QString *err = nullptr);
-    static void writeSecretAsync(const QString &key, const QString &value);
+    // Secrets by key: account id (API token) or "oauth:<atlassian account id>" (OAuth session).
+    static QString readToken(const QString &key);
+    static bool writeToken(const QString &key, const QString &token, QString *err = nullptr);
 };
