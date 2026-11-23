@@ -6,10 +6,10 @@
 #include <functional>
 
 class AuthProvider;
-class JiraClient;
+class Backend;
 class SyncEngine;
 
-// Everything belonging to one Jira site: API client, local db, sync engine.
+// Everything belonging to one account: backend (ticket system), local db, sync engine.
 // All sites sync in parallel; the UI only shows the active one.
 class AccountContext : public QObject {
     Q_OBJECT
@@ -23,6 +23,7 @@ public:
     AuthProvider *auth() const { return m_auth; }
     Database &db() { return m_db; }
     SyncEngine &sync() { return *m_sync; }
+    Backend &backend() { return *m_backend; }
     QString me() const { return m_db.state("me"); }
     QString browseUrl(const QString &key) const;
 
@@ -34,12 +35,9 @@ public:
     void refreshComments(const QString &key, std::function<void(bool changed)> cb);
 
 private:
-    void fetchCommentPage(const QString &key, int startAt, std::shared_ptr<QList<CommentRow>> acc,
-                          std::function<void(bool ok)> done);
-
     Account m_account;
     AuthProvider *m_auth;
-    JiraClient *m_client = nullptr;
+    Backend *m_backend = nullptr;
     Database m_db;
     SyncEngine *m_sync = nullptr;
     QSet<QString> m_commentsInFlight;

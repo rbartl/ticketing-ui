@@ -13,6 +13,8 @@ qt_add_executable(ticketing-ui WIN32 MACOSX_BUNDLE
     src/Adf.h                src/Adf.cpp
     src/Auth.h               src/Auth.cpp
     src/JiraClient.h         src/JiraClient.cpp
+    src/Backend.h
+    src/JiraBackend.h        src/JiraBackend.cpp
     src/Database.h           src/Database.cpp
     src/SyncEngine.h         src/SyncEngine.cpp
     src/AccountContext.h     src/AccountContext.cpp

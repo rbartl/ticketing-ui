@@ -8,21 +8,23 @@
 #include <QSaveFile>
 #include <QStandardPaths>
 
-QString Account::scopeJql() const
+// Accounts saved before the query field: project list + extra JQL + age limit -> one JQL.
+static QString legacyJql(const QJsonObject &o)
 {
     QStringList parts;
-    if (!projects.isEmpty()) {
-        QStringList quoted;
-        for (const auto &p : projects)
-            quoted << '"' + p.trimmed() + '"';
+    QStringList quoted;
+    for (const auto &p : o["projects"].toArray())
+        quoted << '"' + p.toString().trimmed() + '"';
+    if (!quoted.isEmpty())
         parts << "project in (" + quoted.join(", ") + ")";
-    }
-    if (!extraJql.trimmed().isEmpty())
-        parts << "(" + extraJql.trimmed() + ")";
-    if (parts.isEmpty())
-        parts << "assignee = currentUser()";
-    if (maxAgeDays > 0)  // relative => the scope string stays the same, no resync every day
-        return "(" + parts.join(" OR ") + QString(") AND updated >= -%1d").arg(maxAgeDays);
+    const QString extra = o["extraJql"].toString().trimmed();
+    if (!extra.isEmpty())
+        parts << "(" + extra + ")";
+    const int days = o["maxAgeDays"].toInt(0);
+    if (parts.isEmpty() && days > 0)
+        return QString("updated >= -%1d").arg(days);
+    if (days > 0)
+        return "(" + parts.join(" OR ") + QString(") AND updated >= -%1d").arg(days);
     return parts.join(" OR ");
 }
 
@@ -51,10 +53,8 @@ QList<Account> AccountStore::load()
         a.name = o["name"].toString();
         a.baseUrl = o["baseUrl"].toString();
         a.email = o["email"].toString();
-        for (const auto &p : o["projects"].toArray())
-            a.projects << p.toString();
-        a.extraJql = o["extraJql"].toString();
-        a.maxAgeDays = o["maxAgeDays"].toInt(0);
+        a.backend = o["backend"].toString("jira");
+        a.query = o.contains("query") ? o["query"].toString() : legacyJql(o);
         a.authType = o["auth"].toString("token");
         a.cloudId = o["cloudId"].toString();
         a.oauthUser = o["oauthUser"].toString();
@@ -72,9 +72,8 @@ void AccountStore::save(const QList<Account> &accounts)
             {"name", a.name},
             {"baseUrl", a.baseUrl},
             {"email", a.email},
-            {"projects", QJsonArray::fromStringList(a.projects)},
-            {"extraJql", a.extraJql},
-            {"maxAgeDays", a.maxAgeDays},
+            {"backend", a.backend},
+            {"query", a.query},
             {"auth", a.authType},
             {"cloudId", a.cloudId},
             {"oauthUser", a.oauthUser},

@@ -10,7 +10,7 @@ Jira Cloud ──(SyncEngine, Hintergrund)──► SQLite + FTS5 (pro Konto) �
      └──────── Cloud-Fallback (Suche, fremde Issues, Kommentare) ◄─────┘
 ```
 
-- **Sync-Bereich** pro Konto: `project in (...) OR (<zusätzliches JQL>)`.
+- **Sync-Bereich** pro Konto: frei wählbares JQL mit Vorlagen (leer = alle Tickets).
   Erstsync komplett, danach alle 60 s nur `updated >= -Nm`.
   Alle 6 h ID-Abgleich (gelöschte Issues / aus dem Bereich gefallene → Cache).
   Alle 5 min Sprint-Status (geschlossene Sprints).
@@ -23,6 +23,8 @@ Jira Cloud ──(SyncEngine, Hintergrund)──► SQLite + FTS5 (pro Konto) �
 
 | Datei | Inhalt |
 |---|---|
+| `src/Backend.h` | Schnittstelle zum Ticketsystem: Sync, Detailfelder, Aktionen, Abfrage-Vorlagen. UI, Sync und DB kennen nur diese |
+| `src/JiraBackend.*` | Jira Cloud: JQL, JSON → neutrale Datensätze, Sprints, Kommentare, Statusübergänge |
 | `src/JiraClient.*` | REST-Client (HTTP/2, Retry bei 429/503, Token-Erneuerung bei 401) |
 | `src/Auth.*` | API-Token, OAuth-Sessions je Atlassian-Benutzer, Browser-Login (Broker oder direkt) |
 | `broker/` | Cloudflare Worker: hält das OAuth-Client-Secret |

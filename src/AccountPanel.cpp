@@ -1,5 +1,5 @@
 #include "AccountPanel.h"
-#include "JiraClient.h"
+#include "Backend.h"
 
 #include <algorithm>
 #include <QApplication>
@@ -11,11 +11,9 @@
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
-#include <QListWidget>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QShortcut>
-#include <QSignalBlocker>
 #include <QStackedWidget>
 #include <QUuid>
 #include <QVBoxLayout>
@@ -41,25 +39,24 @@ static QLabel *text(const QString &t = {})
     return l;
 }
 
-// Presets for "which tickets besides whole projects"; nullptr = own JQL.
-static const struct {
-    const char *label;
-    const char *jql;
-} kPresets[] = {
-    {"Woran ich beteiligt bin (zugewiesen, gemeldet, beobachtet)",
-     "assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser()"},
-    {"Mir zugewiesen oder von mir beobachtet", "assignee = currentUser() OR watcher = currentUser()"},
-    {"Mir zugewiesen", "assignee = currentUser()"},
-    {"Keine – nur die ausgewählten Projekte", ""},
-    {"Eigenes JQL …", nullptr},
-};
-static constexpr int kCustomPreset = int(std::size(kPresets)) - 1;
+// Templates for "Lokal speichern" of the account's backend; the last combo entry is "own query".
+static const QList<BackendType::Preset> &presets()
+{
+    return BackendType::jira().presets;  // the only backend so far; the form gets a type selector later
+}
 
-static const struct {
-    const char *label;
-    int days;
-} kAges[] = {{"3 Monate", 90}, {"6 Monate", 180}, {"1 Jahr", 365}, {"2 Jahre", 730}, {"Unbegrenzt", 0}};
-static constexpr int kDefaultAgeDays = 365;
+static int customPreset()
+{
+    return int(presets().size());
+}
+
+static int presetFor(const QString &query)
+{
+    for (int i = 0; i < presets().size(); ++i)
+        if (query.trimmed() == presets()[i].query)
+            return i;
+    return customPreset();
+}
 
 static QHBoxLayout *buttonRow(std::initializer_list<QPushButton *> buttons)
 {
@@ -173,6 +170,8 @@ QWidget *AccountPanel::buildForm()
     m_form->addRow("E-Mail", m_email);
     m_form->addRow("API-Token", m_token);
     m_form->addRow(QString(), m_tokenHint);
+    m_loginCheck = text();
+    m_form->addRow(QString(), m_loginCheck);
 
     // What is kept locally (offline, instant search) -----------------------------
     auto *section = new QLabel("<b>Lokal speichern</b>");
@@ -180,33 +179,18 @@ QWidget *AccountPanel::buildForm()
     m_form->addRow(section);
 
     m_preset = new QComboBox;
-    for (const auto &p : kPresets)
+    for (const auto &p : presets())
         m_preset->addItem(p.label);
+    m_preset->addItem("Eigenes " + BackendType::jira().queryLabel + " …");
     m_jql = new QLineEdit;
-    m_jql->setPlaceholderText("z. B. assignee = currentUser() OR labels = ops");
-    m_form->addRow("Tickets", m_preset);
-    m_form->addRow(QString(), m_jql);
-
-    auto *projects = new QWidget;
-    auto *pl = new QVBoxLayout(projects);
-    pl->setContentsMargins(0, 0, 0, 0);
-    m_projectFilter = new QLineEdit;
-    m_projectFilter->setPlaceholderText("Projekte filtern …");
-    m_projectFilter->setClearButtonEnabled(true);
-    m_projectList = new QListWidget;
-    m_projectList->setMinimumHeight(140);
-    m_projectInfo = text();
-    pl->addWidget(m_projectFilter);
-    pl->addWidget(m_projectList);
-    pl->addWidget(m_projectInfo);
-    m_form->addRow("+ ganze Projekte", projects);
-
-    m_age = new QComboBox;
-    for (const auto &a : kAges)
-        m_age->addItem(a.label, a.days);
-    m_form->addRow("Zuletzt geändert", m_age);
-    m_form->addRow(QString(), text("<small>Nur Tickets, die in diesem Zeitraum geändert wurden. Alles andere findet die "
-                                   "Suche weiterhin in der Cloud (☁) und lädt es beim Öffnen.</small>"));
+    m_jql->setPlaceholderText("leer = alle Tickets");
+    m_jql->setClearButtonEnabled(true);
+    m_form->addRow("Vorlage", m_preset);
+    m_form->addRow(BackendType::jira().queryLabel, m_jql);
+    m_form->addRow(QString(), text("<small>Diese Tickets liegen lokal: offline verfügbar, Suche ohne Wartezeit. "
+                                   "Leeres JQL = alle Tickets der Site. Alles andere findet die Suche weiterhin in "
+                                   "der Cloud (☁) und lädt es beim Öffnen.<br>Beispiele: <tt>project in (ABC, OPS)</tt>, "
+                                   "<tt>updated &gt;= -90d</tt>, <tt>labels = ops</tt></small>"));
     l->addLayout(m_form);
 
     m_formError = text();
@@ -217,23 +201,16 @@ QWidget *AccountPanel::buildForm()
     m_formCancel = new QPushButton;
     l->addLayout(buttonRow({m_submit, m_formCancel}));
 
-    connect(m_preset, &QComboBox::currentIndexChanged, this, [this](int i) {
-        m_form->setRowVisible(m_jql, i == kCustomPreset);
-        if (i == kCustomPreset)
-            m_jql->setFocus();
+    // Template -> fills the JQL; editing the JQL selects the matching template (or "own JQL").
+    connect(m_preset, &QComboBox::activated, this, [this](int i) {
+        if (i != customPreset())
+            m_jql->setText(presets()[i].query);
+        m_jql->setFocus();
     });
-    connect(m_projectFilter, &QLineEdit::textChanged, this, &AccountPanel::filterProjects);
-    connect(m_projectList, &QListWidget::itemChanged, this, [this](QListWidgetItem *item) {
-        const QString key = item->data(Qt::UserRole).toString();
-        if (item->checkState() == Qt::Checked)
-            m_selectedProjects.insert(key);
-        else
-            m_selectedProjects.remove(key);
-        updateProjectInfo();
-    });
-    // Token accounts: load the project list as soon as the credentials are complete (also checks them).
+    connect(m_jql, &QLineEdit::textEdited, this, [this](const QString &t) { m_preset->setCurrentIndex(presetFor(t)); });
+    // Token accounts: check the login as soon as the credentials are complete.
     for (QLineEdit *e : {m_url, m_email, m_token})
-        connect(e, &QLineEdit::editingFinished, this, &AccountPanel::loadProjects);
+        connect(e, &QLineEdit::editingFinished, this, &AccountPanel::checkLogin);
     connect(m_submit, &QPushButton::clicked, this, &AccountPanel::submitForm);
     connect(m_formCancel, &QPushButton::clicked, this, &AccountPanel::cancelCurrent);
     for (QLineEdit *e : {m_name, m_url, m_email, m_token, m_jql})
@@ -375,146 +352,68 @@ void AccountPanel::showForm(Mode mode, const Account &account)
     m_form->setRowVisible(m_token, token);
     m_form->setRowVisible(m_tokenHint, token);
 
-    // Sync scope: new accounts start with the broadest useful preset and one year.
-    int preset = 0;
-    if (mode == Mode::Edit) {
-        preset = kCustomPreset;
-        for (int i = 0; i < kCustomPreset; ++i)
-            if (account.extraJql.trimmed() == QString::fromUtf8(kPresets[i].jql))
-                preset = i;
-    }
-    m_jql->setText(mode == Mode::Edit ? account.extraJql : QString());
-    m_preset->setCurrentIndex(preset);
-    m_form->setRowVisible(m_jql, preset == kCustomPreset);
-    const int days = mode == Mode::Edit ? account.maxAgeDays : kDefaultAgeDays;
-    int age = m_age->findData(days);
-    if (age < 0) {
-        m_age->addItem(QString("%1 Tage").arg(days), days);
-        age = m_age->count() - 1;
-    }
-    m_age->setCurrentIndex(age);
+    // Sync scope (older accounts are converted when loading, see AccountStore::load).
+    const QString jql = mode == Mode::Edit ? account.query : presets().first().query;
+    m_jql->setText(jql);
+    m_preset->setCurrentIndex(presetFor(jql));
 
-    m_selectedProjects = QSet<QString>(account.projects.begin(), account.projects.end());
-    m_projectsLoadedFor.clear();
-    m_projectFilter->clear();
-    m_projectList->clear();
-    updateProjectInfo(token && mode == Mode::NewToken
-                          ? "Die Projekte erscheinen, sobald URL, E-Mail und API-Token eingetragen sind."
-                          : QString());
+    m_checkedFor.clear();
+    setLoginCheck({});
 
     m_formError->clear();
     m_stack->setCurrentWidget(m_formPage);
     (mode == Mode::NewToken ? m_url : m_name)->setFocus();
-    if (mode != Mode::NewToken)
-        loadProjects();
+    if (mode == Mode::Edit)
+        checkLogin();
 }
 
-// Projects --------------------------------------------------------------------------
+// Login check (API-token accounts) ----------------------------------------------------
 
-void AccountPanel::loadProjects()
+void AccountPanel::checkLogin()
 {
-    if (m_stack->currentWidget() != m_formPage)
+    if (m_stack->currentWidget() != m_formPage || m_account.isOAuth())
         return;
-    QString base, credentials, token;
-    if (m_account.isOAuth()) {
-        base = "https://api.atlassian.com/ex/jira/" + m_account.cloudId;
-        credentials = m_account.oauthUser;
-    } else {
-        base = m_url->text().trimmed();
-        if (!base.isEmpty() && !base.startsWith("http"))
-            base.prepend("https://");
-        token = m_token->text();
-        if (token.isEmpty() && m_mode == Mode::Edit)
-            token = AccountStore::readToken(m_account.id);
-        if (base.isEmpty() || m_email->text().trimmed().isEmpty() || token.isEmpty())
-            return;
-        credentials = m_email->text().trimmed() + '\n' + token;
-    }
-    if (base + '\n' + credentials == m_projectsLoadedFor)
-        return;  // already loaded / loading
-    delete m_probe;  // aborts a running load
-    m_probe = nullptr;
-    AuthProvider *auth = nullptr;
-    if (m_account.isOAuth()) {
-        auth = m_sessionFor ? m_sessionFor(m_account.oauthUser) : nullptr;
-    } else {
-        delete m_probeAuth;
-        auth = m_probeAuth = new BasicAuth(m_email->text().trimmed(), token, this);
-    }
-    if (!auth)
+    QString base = m_url->text().trimmed();
+    if (!base.isEmpty() && !base.startsWith("http"))
+        base.prepend("https://");
+    QString token = m_token->text();
+    if (token.isEmpty() && m_mode == Mode::Edit)
+        token = AccountStore::readToken(m_account.id);
+    const QString email = m_email->text().trimmed();
+    if (base.isEmpty() || email.isEmpty() || token.isEmpty())
         return;
-    m_projectsLoadedFor = base + '\n' + credentials;
-    m_probe = new JiraClient(base, auth, this);
-    updateProjectInfo("Lade Projekte …");
-    fetchProjectPage(0, std::make_shared<QList<QPair<QString, QString>>>());
-}
-
-void AccountPanel::fetchProjectPage(int startAt, std::shared_ptr<QList<QPair<QString, QString>>> acc)
-{
-    JiraClient *client = m_probe;
-    const QUrlQuery q{{"startAt", QString::number(startAt)}, {"maxResults", "100"}, {"orderBy", "name"}};
-    client->get("/rest/api/3/project/search", q, [this, client, startAt, acc](const QJsonDocument &doc, const QString &err) {
-        if (client != m_probe)
+    const QString key = base + '\n' + email + '\n' + token;
+    if (key == m_checkedFor)
+        return;  // already checked / checking
+    m_checkedFor = key;
+    delete m_probe;  // aborts a running check
+    delete m_probeAuth;
+    m_probeAuth = new BasicAuth(email, token, this);
+    Account probe = m_account;
+    probe.baseUrl = base;
+    m_probe = Backend::create(probe, m_probeAuth, nullptr, this);
+    setLoginCheck("Prüfe Anmeldung …");
+    Backend *backend = m_probe;
+    backend->checkLogin([this, backend](const QString &name, const QString &err) {
+        if (backend != m_probe)
             return;
         if (!err.isEmpty()) {
-            m_projectsLoadedFor.clear();  // retry on the next edit
+            m_checkedFor.clear();  // retry on the next edit
             const bool auth = err.startsWith("HTTP 401") || err.startsWith("HTTP 403");
-            updateProjectInfo(auth ? "Anmeldung fehlgeschlagen – URL, E-Mail und API-Token prüfen."
-                                   : "Projekte konnten nicht geladen werden: " + err);
+            setLoginCheck(auth ? "Anmeldung fehlgeschlagen – URL, E-Mail und API-Token prüfen."
+                               : "Nicht erreichbar: " + err,
+                          true);
             return;
         }
-        const auto values = doc["values"].toArray();
-        for (const auto &v : values) {
-            const auto o = v.toObject();
-            acc->append({o["key"].toString(), o["name"].toString()});
-        }
-        if (!doc["isLast"].toBool(true) && !values.isEmpty())
-            fetchProjectPage(startAt + int(values.size()), acc);
-        else
-            fillProjects(*acc);
+        setLoginCheck("✓ Angemeldet als " + name);
     });
 }
 
-void AccountPanel::fillProjects(const QList<QPair<QString, QString>> &projects)
+void AccountPanel::setLoginCheck(const QString &t, bool error)
 {
-    QSignalBlocker b(m_projectList);
-    m_projectList->clear();
-    QSet<QString> missing = m_selectedProjects;
-    auto add = [this](const QString &key, const QString &label) {
-        auto *item = new QListWidgetItem(label, m_projectList);
-        item->setData(Qt::UserRole, key);
-        item->setFlags(Qt::ItemIsEnabled | Qt::ItemIsUserCheckable);
-        item->setCheckState(m_selectedProjects.contains(key) ? Qt::Checked : Qt::Unchecked);
-    };
-    for (const auto &[key, name] : projects) {
-        add(key, key + "  –  " + name);
-        missing.remove(key);
-    }
-    for (const auto &key : missing)  // selected earlier, no longer visible (archived, no access)
-        add(key, key + "  –  (nicht gefunden)");
-    filterProjects();
-    updateProjectInfo();
-}
-
-void AccountPanel::filterProjects()
-{
-    const QString f = m_projectFilter->text().trimmed();
-    for (int i = 0; i < m_projectList->count(); ++i) {
-        auto *item = m_projectList->item(i);
-        item->setHidden(!f.isEmpty() && !item->text().contains(f, Qt::CaseInsensitive));
-    }
-}
-
-void AccountPanel::updateProjectInfo(const QString &t)
-{
-    QString s = t;
-    if (s.isEmpty() && m_projectList->count() > 0)
-        s = m_selectedProjects.isEmpty() ? QString("Optional: Projekte anhaken, die komplett lokal liegen sollen "
-                                                   "(z. B. das eigene Team-Board mit Sprints).")
-                                         : QString("%1 ausgewählt: %2")
-                                               .arg(m_selectedProjects.size())
-                                               .arg(QStringList(m_selectedProjects.values()).join(", "));
-    m_projectInfo->setText("<small>" + s.toHtmlEscaped() + "</small>");
+    m_form->setRowVisible(m_loginCheck, !t.isEmpty());
+    m_loginCheck->setText("<small>" + t.toHtmlEscaped() + "</small>");
+    m_loginCheck->setStyleSheet(error ? "color: #c0392b" : "");
 }
 
 // Submit ----------------------------------------------------------------------------
@@ -531,14 +430,6 @@ void AccountPanel::submitForm()
         m_formError->setText("Bitte den API-Token eintragen.");
         return;
     }
-    const int preset = m_preset->currentIndex();
-    const QString jql = preset == kCustomPreset ? m_jql->text().trimmed() : QString::fromUtf8(kPresets[preset].jql);
-    if (jql.isEmpty() && m_selectedProjects.isEmpty()) {
-        m_formError->setText(preset == kCustomPreset ? "Bitte JQL eintragen oder Projekte auswählen."
-                                                     : "Bitte mindestens ein Projekt auswählen.");
-        return;
-    }
-
     Account a = m_account;
     if (m_mode == Mode::NewToken) {
         a.id = QUuid::createUuid().toString(QUuid::WithoutBraces);
@@ -554,10 +445,7 @@ void AccountPanel::submitForm()
         a.name = QUrl(a.baseUrl).host().section('.', 0, 0);
     if (token)
         a.email = m_email->text().trimmed();
-    a.projects = m_selectedProjects.values();
-    a.projects.sort();
-    a.extraJql = jql;
-    a.maxAgeDays = m_age->currentData().toInt();
+    a.query = m_jql->text().trimmed();
 
     const QString newToken = token ? m_token->text() : QString();
     if (!newToken.isEmpty()) {

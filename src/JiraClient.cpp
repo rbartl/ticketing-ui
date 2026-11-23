@@ -27,6 +27,11 @@ void JiraClient::post(const QString &path, const QJsonObject &body, JsonCb cb)
     send("POST", QUrl(m_base.toString() + path), QJsonDocument(body).toJson(QJsonDocument::Compact), std::move(cb), 0, false);
 }
 
+void JiraClient::put(const QString &path, const QJsonObject &body, JsonCb cb)
+{
+    send("PUT", QUrl(m_base.toString() + path), QJsonDocument(body).toJson(QJsonDocument::Compact), std::move(cb), 0, false);
+}
+
 void JiraClient::searchJql(const QString &jql, const QStringList &fields, int maxResults,
                            const QString &nextPageToken, JsonCb cb)
 {

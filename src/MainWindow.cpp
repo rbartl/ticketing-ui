@@ -3,6 +3,7 @@
 #include "AccountContext.h"
 #include "AccountPanel.h"
 #include "Auth.h"
+#include "Backend.h"
 #include "IssueListModel.h"
 #include "SyncEngine.h"
 
@@ -171,7 +172,6 @@ MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
             m_resultView->setCurrentIndex(m_resultModel->index(0, 0));
     });
     connect(m_sprintBox, &QComboBox::currentIndexChanged, this, &MainWindow::showSprint);
-    m_accountPanel->setSessionProvider([this](const QString &user) { return oauthSession(user); });
     connect(m_accountPanel, &AccountPanel::accountReady, this, &MainWindow::addAccount);
     connect(m_accountPanel, &AccountPanel::accountUpdated, this, &MainWindow::updateAccount);
     connect(m_accountPanel, &AccountPanel::closed, this, [this] {
@@ -643,20 +643,26 @@ void MainWindow::renderDetail()
     h += "<p style='margin-top:6px; margin-bottom:14px; font-size:17pt; font-weight:600'>" +
          d->summary.toHtmlEscaped() + "</p>";
 
-    h += "<table width='100%' cellspacing='0' cellpadding='4'>";
-    h += "<tr>" + label("Status") + value(pill(d->status, IssueStyle::statusColor(d->statusCat))) +
-         label("Priorität") + value(d->priority.toHtmlEscaped()) + "</tr>";
-    h += "<tr>" + label("Zugewiesen") + value(d->assignee.toHtmlEscaped()) + label("Melder") +
-         value(d->reporter.toHtmlEscaped()) + "</tr>";
-    h += "<tr>" + label("Erstellt") + value(IssueStyle::fullTime(d->created)) + label("Geändert") +
-         value(IssueStyle::fullTime(d->updated)) + "</tr>";
-    if (!d->labels.isEmpty()) {
-        QString chips;
-        for (const auto &l : d->labels.split(' ', Qt::SkipEmptyParts))
-            chips += "<span style='background-color:" + card + "'>&nbsp;" + l.toHtmlEscaped() + "&nbsp;</span> ";
-        h += "<tr>" + label("Labels") + "<td colspan='3'>" + chips + "</td></tr>";
+    // Status first, then the backend's fields, two per row.
+    QStringList cells{label("Status") + value(pill(d->status, IssueStyle::statusColor(d->statusCat)))};
+    QString tags;
+    for (const DetailField &f : m_ctx->backend().detailFields(*d)) {
+        if (f.kind == DetailField::Tags) {
+            QString chips;
+            for (const auto &t : f.value.split(' ', Qt::SkipEmptyParts))
+                chips += "<span style='background-color:" + card + "'>&nbsp;" + t.toHtmlEscaped() + "&nbsp;</span> ";
+            tags += "<tr>" + label(f.label.toHtmlEscaped()) + "<td colspan='3'>" + chips + "</td></tr>";
+            continue;
+        }
+        cells << label(f.label.toHtmlEscaped()) +
+                     value(f.kind == DetailField::Time ? IssueStyle::fullTime(f.value) : f.value.toHtmlEscaped());
     }
-    h += "</table>";
+    if (cells.size() % 2)
+        cells << label({}) + "<td width='32%'></td>";
+    h += "<table width='100%' cellspacing='0' cellpadding='4'>";
+    for (int i = 0; i < cells.size(); i += 2)
+        h += "<tr>" + cells[i] + cells[i + 1] + "</tr>";
+    h += tags + "</table>";
 
     h += heading("Beschreibung");
     h += d->descriptionHtml.isEmpty() ? "<p style='color:" + muted + "'>Keine Beschreibung</p>" : d->descriptionHtml;

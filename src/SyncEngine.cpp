@@ -1,31 +1,18 @@
 #include "SyncEngine.h"
-#include "JiraClient.h"
+#include "Backend.h"
 
 #include <QDateTime>
-#include <QJsonArray>
-#include <QJsonObject>
 
 static constexpr int kIntervalMs = 60 * 1000;
 static constexpr qint64 kReconcileEveryMs = 6LL * 3600 * 1000;
 static constexpr qint64 kSprintRefreshEveryMs = 5LL * 60 * 1000;
 static constexpr int kCacheDays = 30;
 
-SyncEngine::SyncEngine(const QString &scopeJql, JiraClient *client, Database *db, QObject *parent)
-    : QObject(parent), m_scope(scopeJql), m_client(client), m_db(db)
+SyncEngine::SyncEngine(const QString &scope, Backend *backend, Database *db, QObject *parent)
+    : QObject(parent), m_scope(scope), m_backend(backend), m_db(db)
 {
-    m_fields.sprint = m_db->state("field_sprint");
-    m_fields.rank = m_db->state("field_rank");
     m_timer.setInterval(kIntervalMs);
     connect(&m_timer, &QTimer::timeout, this, &SyncEngine::syncNow);
-}
-
-QStringList SyncEngine::fields() const
-{
-    QStringList f{"summary", "status", "issuetype", "priority", "assignee", "reporter",
-                  "labels", "created", "updated", "description", "project"};
-    if (!m_fields.sprint.isEmpty()) f << m_fields.sprint;
-    if (!m_fields.rank.isEmpty()) f << m_fields.rank;
-    return f;
 }
 
 void SyncEngine::setStatus(const QString &s)
@@ -44,11 +31,11 @@ void SyncEngine::start()
     syncNow();
 }
 
-void SyncEngine::setScope(const QString &scopeJql)
+void SyncEngine::setScope(const QString &scope)
 {
-    if (scopeJql == m_scope)
+    if (scope == m_scope)
         return;
-    m_scope = scopeJql;
+    m_scope = scope;
     resetForScope();
     syncNow();  // if a sync is running, it notices the new scope when done and starts over
 }
@@ -61,31 +48,16 @@ void SyncEngine::resetForScope()
     m_db->setState("last_reconcile", "0");
 }
 
-// Discover site-specific custom fields (Sprint, Rank) and our own accountId.
+// Backend specifics (Jira: custom field ids, own accountId) before the first sync.
 void SyncEngine::bootstrap(std::function<void()> next)
 {
     setStatus("Verbinde …");
-    m_client->get("/rest/api/3/field", {}, [this, next](const QJsonDocument &doc, const QString &err) {
+    m_backend->prepare([this, next](const QString &myId, const QString &err) {
         m_lastError = err;
-        if (err.isEmpty()) {
-            m_bootstrapped = true;
-            m_fields = {};
-            for (const auto &v : doc.array()) {
-                const auto o = v.toObject();
-                const auto custom = o["schema"].toObject()["custom"].toString();
-                if (custom == "com.pyxis.greenhopper.jira:gh-sprint")
-                    m_fields.sprint = o["id"].toString();
-                else if (custom == "com.pyxis.greenhopper.jira:gh-lexo-rank")
-                    m_fields.rank = o["id"].toString();
-            }
-            m_db->setState("field_sprint", m_fields.sprint);
-            m_db->setState("field_rank", m_fields.rank);
-        }
-        m_client->get("/rest/api/3/myself", {}, [this, next](const QJsonDocument &me, const QString &err2) {
-            if (err2.isEmpty())
-                m_db->setState("me", me["accountId"].toString());
-            next();
-        });
+        m_bootstrapped = err.isEmpty();
+        if (!myId.isEmpty())
+            m_db->setState("me", myId);
+        next();
     });
 }
 
@@ -95,7 +67,7 @@ void SyncEngine::syncNow()
         return;
     m_running = true;
 
-    // Never sync without knowing the Sprint/Rank fields (e.g. started while logged out / offline).
+    // Never sync before the backend is prepared (e.g. started while logged out / offline).
     if (!m_bootstrapped) {
         bootstrap([this] {
             m_running = false;
@@ -109,17 +81,15 @@ void SyncEngine::syncNow()
 
     const bool full = m_db->state("full_done") != "1";
     const qint64 started = QDateTime::currentMSecsSinceEpoch();
-    QString jql = "(" + m_scope + ")";
+    int minutes = -1;
     if (!full) {
         const qint64 last = m_db->state("last_sync").toLongLong();
-        const qint64 minutes = (started - last) / 60000 + 2;  // 2 min overlap, relative => no timezone issues
-        jql += QString(" AND updated >= -%1m").arg(minutes);
+        minutes = int((started - last) / 60000 + 2);  // 2 min overlap
     }
-    jql += " ORDER BY updated ASC";
     if (full)
         setStatus("Erstsync …");
 
-    fetchPages(jql, {}, 0, full, [this, full, started, scope = m_scope](bool ok, int count, const QString &err) {
+    fetchPages(minutes, {}, 0, full, [this, full, started, scope = m_scope](bool ok, int count, const QString &err) {
         m_running = false;
         if (scope != m_scope) {  // scope edited meanwhile
             syncNow();
@@ -139,26 +109,23 @@ void SyncEngine::syncNow()
     });
 }
 
-void SyncEngine::fetchPages(const QString &jql, const QString &token, int total, bool full,
+void SyncEngine::fetchPages(int updatedWithinMinutes, const QString &cursor, int total, bool full,
                             std::function<void(bool, int, QString)> done)
 {
-    m_client->searchJql(jql, fields(), 100, token,
-                        [=, this](const QJsonDocument &doc, const QString &err) {
+    m_backend->fetchIssues(m_scope, updatedWithinMinutes, cursor,
+                           [=, this](const IssuePage &page, const QString &err) {
         if (!err.isEmpty()) {
             done(false, total, err);
             return;
         }
-        const auto o = doc.object();
-        const auto issues = o["issues"].toArray();
-        const int n = total + m_db->upsertIssues(issues, m_fields, true);
+        const int n = total + m_db->upsertIssues(page.issues, true);
         if (full) {
             setStatus(QString("Erstsync: %1 Issues …").arg(n));
-            if (!issues.isEmpty())
+            if (!page.issues.isEmpty())
                 emit dataChanged();  // fill the UI progressively
         }
-        const QString next = o["nextPageToken"].toString();
-        if (!o["isLast"].toBool(next.isEmpty()) && !next.isEmpty())
-            fetchPages(jql, next, n, full, done);
+        if (!page.next.isEmpty())
+            fetchPages(updatedWithinMinutes, page.next, n, full, done);
         else
             done(true, n, {});
     });
@@ -180,15 +147,14 @@ void SyncEngine::afterSync()
 // Closing a sprint does not touch the done issues, so sprint state is refreshed explicitly.
 void SyncEngine::refreshSprints()
 {
+    if (!m_backend->hasSprints())
+        return;
     for (const auto &s : m_db->openSprints()) {
-        m_client->get(QString("/rest/agile/1.0/sprint/%1").arg(s.id), {},
-                      [this](const QJsonDocument &doc, const QString &err) {
-            if (!err.isEmpty())
+        m_backend->fetchSprint(s.id, [this](const std::optional<SprintInfo> &sprint) {
+            if (!sprint)
                 return;
-            const auto o = doc.object();
-            m_db->updateSprint(o);
-            const QString state = o["state"].toString().toLower();
-            if (state != "active" && state != "future")
+            m_db->updateSprint(*sprint);
+            if (sprint->state != "active" && sprint->state != "future")
                 emit dataChanged();  // sprint was closed -> drop it from the sprint list
         });
     }
@@ -211,19 +177,16 @@ void SyncEngine::reconcile()
     });
 }
 
-void SyncEngine::fetchIds(const QString &token, std::shared_ptr<QSet<qint64>> acc, std::function<void(bool)> done)
+void SyncEngine::fetchIds(const QString &cursor, std::shared_ptr<QSet<qint64>> acc, std::function<void(bool)> done)
 {
-    m_client->searchJql("(" + m_scope + ")", {"id"}, 5000, token,
-                        [=, this](const QJsonDocument &doc, const QString &err) {
+    m_backend->fetchIds(m_scope, cursor, [=, this](const QList<qint64> &ids, const QString &next, const QString &err) {
         if (!err.isEmpty()) {
             done(false);
             return;
         }
-        const auto o = doc.object();
-        for (const auto &v : o["issues"].toArray())
-            acc->insert(v.toObject()["id"].toString().toLongLong());
-        const QString next = o["nextPageToken"].toString();
-        if (!o["isLast"].toBool(next.isEmpty()) && !next.isEmpty())
+        for (qint64 id : ids)
+            acc->insert(id);
+        if (!next.isEmpty())
             fetchIds(next, acc, done);
         else
             done(true);

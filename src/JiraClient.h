@@ -20,6 +20,7 @@ public:
 
     void get(const QString &path, const QUrlQuery &query, JsonCb cb);
     void post(const QString &path, const QJsonObject &body, JsonCb cb);
+    void put(const QString &path, const QJsonObject &body, JsonCb cb);
 
     // POST /rest/api/3/search/jql (token based paging)
     void searchJql(const QString &jql, const QStringList &fields, int maxResults,

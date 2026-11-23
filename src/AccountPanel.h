@@ -4,17 +4,14 @@
 
 #include <QJsonArray>
 #include <QPointer>
-#include <QSet>
 #include <QWidget>
 #include <functional>
-#include <memory>
 
-class JiraClient;
+class Backend;
 class QComboBox;
 class QFormLayout;
 class QLabel;
 class QLineEdit;
-class QListWidget;
 class QPushButton;
 class QStackedWidget;
 
@@ -26,8 +23,6 @@ class AccountPanel : public QWidget {
     Q_OBJECT
 public:
     explicit AccountPanel(QWidget *parent = nullptr);
-    // OAuth: the session of an Atlassian identity (owned by MainWindow), used to list projects.
-    void setSessionProvider(std::function<AuthProvider *(const QString &oauthUser)> f) { m_sessionFor = std::move(f); }
     void setCancelable(bool on);  // false while there is no account yet
     void showChoice();
     void showTokenForm();
@@ -50,17 +45,13 @@ private:
     void stopLogin();
     void nextSite();
     void showForm(Mode mode, const Account &account);
-    void loadProjects();
-    void fetchProjectPage(int startAt, std::shared_ptr<QList<QPair<QString, QString>>> acc);
-    void fillProjects(const QList<QPair<QString, QString>> &projects);
-    void filterProjects();
-    void updateProjectInfo(const QString &text = {});
+    void checkLogin();
+    void setLoginCheck(const QString &text, bool error = false);
     void submitForm();
     void cancelCurrent();
     void leave();
 
     bool m_cancelable = true;
-    std::function<AuthProvider *(const QString &)> m_sessionFor;
     QStackedWidget *m_stack = nullptr;
     QWidget *m_choicePage = nullptr, *m_loginPage = nullptr, *m_formPage = nullptr;
     QPushButton *m_choiceCancel = nullptr;
@@ -76,19 +67,15 @@ private:
     Mode m_mode = Mode::NewToken;
     Account m_account;  // edited account, or the OAuth site being set up
     QFormLayout *m_form = nullptr;
-    QLabel *m_formTitle = nullptr, *m_formError = nullptr, *m_tokenHint = nullptr;
+    QLabel *m_formTitle = nullptr, *m_formError = nullptr, *m_tokenHint = nullptr, *m_loginCheck = nullptr;
     QLineEdit *m_name = nullptr, *m_url = nullptr, *m_email = nullptr, *m_token = nullptr;
-    QComboBox *m_preset = nullptr, *m_age = nullptr;
+    QComboBox *m_preset = nullptr;
     QLineEdit *m_jql = nullptr;
-    QLineEdit *m_projectFilter = nullptr;
-    QListWidget *m_projectList = nullptr;
-    QLabel *m_projectInfo = nullptr;
     QPushButton *m_submit = nullptr, *m_formCancel = nullptr;
 
-    // Project list, fetched with the credentials of the form
-    QSet<QString> m_selectedProjects;
-    QString m_projectsLoadedFor;  // url + credentials the list belongs to
-    JiraClient *m_probe = nullptr;
+    // Login check with the credentials of the form (API-token accounts)
+    QString m_checkedFor;  // url + credentials last checked
+    Backend *m_probe = nullptr;
     BasicAuth *m_probeAuth = nullptr;
 
     // OAuth: identity of the finished login and its sites still to set up

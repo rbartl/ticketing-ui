@@ -1,6 +1,4 @@
 #pragma once
-#include <QJsonArray>
-#include <QJsonObject>
 #include <QList>
 #include <QSet>
 #include <QSqlDatabase>
@@ -9,12 +7,7 @@
 
 class QSqlQuery;
 
-// Site-specific custom field ids, discovered via /rest/api/3/field.
-struct FieldIds {
-    QString sprint;
-    QString rank;
-};
-
+// Backend neutral: statusCat is "new" | "indeterminate" | "done", times are UTC ISO.
 struct IssueRow {
     qint64 id = 0;
     QString key, summary, status, statusCat, assignee, priority, issueType, updated, rank;
@@ -25,19 +18,27 @@ struct IssueRow {
 
 struct IssueDetail : IssueRow {
     QString descriptionHtml;
+    QString sprint;  // names of its sprints, comma separated
 };
 
 struct SprintInfo {
     qint64 id = 0;
-    QString name, state, start, end;
+    QString name, state, start, end, goal;  // state: "active" | "future" | "closed"
     qint64 boardId = 0;
+};
+
+// Everything stored about one issue, as delivered by the backend.
+struct IssueRecord : IssueDetail {
+    QString assigneeId;
+    QString descriptionText;                   // for the full text index
+    std::optional<QList<SprintInfo>> sprints;  // nullopt = unknown, keep the stored ones
 };
 
 struct CommentRow {
     QString id, author, created, updated, html;
 };
 
-// Local clone of one Jira site (SQLite + FTS5). One file per account.
+// Local clone of one account (SQLite + FTS5). One file per account.
 class Database {
 public:
     Database() = default;
@@ -51,7 +52,7 @@ public:
     void setState(const QString &key, const QString &value);
 
     // Issues ------------------------------------------------------------
-    int upsertIssues(const QJsonArray &issues, const FieldIds &fields, bool inScope);
+    int upsertIssues(const QList<IssueRecord> &issues, bool inScope);
     QList<IssueRow> search(const QString &text, int limit) const;
     QList<IssueRow> myOpen(const QString &accountId, int limit) const;
     std::optional<IssueDetail> issue(const QString &key) const;
@@ -64,18 +65,15 @@ public:
     // Sprints -----------------------------------------------------------
     QList<SprintInfo> openSprints() const;
     QList<IssueRow> sprintIssues(qint64 sprintId) const;
-    void updateSprint(const QJsonObject &sprint);
+    void updateSprint(const SprintInfo &sprint);
 
     // Comment cache -----------------------------------------------------
     QList<CommentRow> comments(const QString &issueKey) const;
     qint64 commentsFetchedAt(const QString &issueKey) const;  // 0 = never
     bool replaceComments(const QString &issueKey, const QList<CommentRow> &rows);  // true if changed
 
-    static IssueRow rowFromJson(const QJsonObject &issue);
-    static QString toUtcIso(const QString &jiraTime);
-
 private:
     QSqlDatabase db() const;
-    void upsertSprint(QSqlQuery &q, const QJsonObject &s);
+    void upsertSprint(QSqlQuery &q, const SprintInfo &s);
     QString m_conn;
 };

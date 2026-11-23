@@ -1,9 +1,7 @@
 #include "Database.h"
-#include "Adf.h"
 
 #include <QDateTime>
 #include <QHash>
-#include <QJsonValue>
 #include <QRegularExpression>
 #include <QSqlError>
 #include <QSqlQuery>
@@ -143,50 +141,15 @@ void Database::setState(const QString &key, const QString &value)
     q.exec();
 }
 
-QString Database::toUtcIso(const QString &jiraTime)
+void Database::upsertSprint(QSqlQuery &q, const SprintInfo &s)
 {
-    if (jiraTime.isEmpty())
-        return {};
-    static const QRegularExpression offset("([+-]\\d\\d)(\\d\\d)$");  // +0100 -> +01:00
-    QString s = jiraTime;
-    s.replace(offset, "\\1:\\2");
-    const QDateTime dt = QDateTime::fromString(s, Qt::ISODateWithMs);
-    return dt.isValid() ? dt.toUTC().toString(Qt::ISODateWithMs) : jiraTime;
-}
-
-IssueRow Database::rowFromJson(const QJsonObject &issue)
-{
-    const auto f = issue["fields"].toObject();
-    const auto st = f["status"].toObject();
-    IssueRow r;
-    r.id = issue["id"].toString().toLongLong();
-    r.key = issue["key"].toString();
-    r.summary = f["summary"].toString();
-    r.status = st["name"].toString();
-    r.statusCat = st["statusCategory"].toObject()["key"].toString();
-    r.assignee = f["assignee"].toObject()["displayName"].toString();
-    r.priority = f["priority"].toObject()["name"].toString();
-    r.issueType = f["issuetype"].toObject()["name"].toString();
-    r.updated = toUtcIso(f["updated"].toString());
-    r.project = f["project"].toObject()["key"].toString();
-    r.reporter = f["reporter"].toObject()["displayName"].toString();
-    r.created = toUtcIso(f["created"].toString());
-    QStringList labels;
-    for (const auto &l : f["labels"].toArray())
-        labels << l.toString();
-    r.labels = labels.join(' ');
-    return r;
-}
-
-void Database::upsertSprint(QSqlQuery &q, const QJsonObject &s)
-{
-    q.bindValue(":id", s["id"].toVariant().toLongLong());
-    q.bindValue(":name", s["name"].toString());
-    q.bindValue(":state", s["state"].toString().toLower());
-    q.bindValue(":board", s["boardId"].toVariant().toLongLong());
-    q.bindValue(":start", nullable(toUtcIso(s["startDate"].toString())));
-    q.bindValue(":end", nullable(toUtcIso(s["endDate"].toString())));
-    q.bindValue(":goal", s["goal"].toString());
+    q.bindValue(":id", s.id);
+    q.bindValue(":name", s.name);
+    q.bindValue(":state", s.state);
+    q.bindValue(":board", s.boardId);
+    q.bindValue(":start", nullable(s.start));
+    q.bindValue(":end", nullable(s.end));
+    q.bindValue(":goal", s.goal);
     q.exec();
 }
 
@@ -197,7 +160,7 @@ static const char *kUpsertSprint =
     " board_id=excluded.board_id, start_date=excluded.start_date,"
     " end_date=excluded.end_date, goal=excluded.goal";
 
-int Database::upsertIssues(const QJsonArray &issues, const FieldIds &fieldIds, bool inScope)
+int Database::upsertIssues(const QList<IssueRecord> &issues, bool inScope)
 {
     QSqlDatabase d = db();
     d.transaction();
@@ -223,34 +186,26 @@ int Database::upsertIssues(const QJsonArray &issues, const FieldIds &fieldIds, b
     upSprint.prepare(kUpsertSprint);
 
     int n = 0;
-    for (const auto &v : issues) {
-        const auto issue = v.toObject();
-        const auto f = issue["fields"].toObject();
-        const IssueRow r = rowFromJson(issue);
+    for (const IssueRecord &r : issues) {
         if (r.id == 0)
             continue;
 
-        QStringList labels;
-        for (const auto &l : f["labels"].toArray())
-            labels << l.toString();
-        const QString rank = fieldIds.rank.isEmpty() ? QString() : f[fieldIds.rank].toString();
-
         up.bindValue(":id", r.id);
         up.bindValue(":key", r.key);
-        up.bindValue(":project", f["project"].toObject()["key"].toString());
+        up.bindValue(":project", r.project);
         up.bindValue(":summary", r.summary);
         up.bindValue(":status", r.status);
         up.bindValue(":cat", r.statusCat);
         up.bindValue(":type", r.issueType);
         up.bindValue(":prio", r.priority);
         up.bindValue(":assignee", r.assignee);
-        up.bindValue(":assignee_id", f["assignee"].toObject()["accountId"].toString());
-        up.bindValue(":reporter", f["reporter"].toObject()["displayName"].toString());
-        up.bindValue(":labels", labels.join(' '));
-        up.bindValue(":created", toUtcIso(f["created"].toString()));
+        up.bindValue(":assignee_id", r.assigneeId);
+        up.bindValue(":reporter", r.reporter);
+        up.bindValue(":labels", r.labels);
+        up.bindValue(":created", r.created);
         up.bindValue(":updated", r.updated);
-        up.bindValue(":rank", nullable(rank));
-        up.bindValue(":desc", Adf::toHtml(f["description"]));
+        up.bindValue(":rank", nullable(r.rank));
+        up.bindValue(":desc", r.descriptionHtml);
         up.bindValue(":scope", inScope ? 1 : 0);
         up.exec();
 
@@ -259,20 +214,17 @@ int Database::upsertIssues(const QJsonArray &issues, const FieldIds &fieldIds, b
         insFts.addBindValue(r.id);
         insFts.addBindValue(r.key);
         insFts.addBindValue(r.summary);
-        insFts.addBindValue(Adf::toText(f["description"]));
-        insFts.addBindValue(labels.join(' '));
+        insFts.addBindValue(r.descriptionText);
+        insFts.addBindValue(r.labels);
         insFts.exec();
 
-        if (!fieldIds.sprint.isEmpty() && f.contains(fieldIds.sprint)) {
+        if (r.sprints) {
             delSprints.addBindValue(r.id);
             delSprints.exec();
-            for (const auto &sv : f[fieldIds.sprint].toArray()) {
-                const auto s = sv.toObject();
-                if (s.isEmpty())
-                    continue;
-                upsertSprint(upSprint, s);
+            for (const SprintInfo &sp : *r.sprints) {
+                upsertSprint(upSprint, sp);
                 insIssueSprint.addBindValue(r.id);
-                insIssueSprint.addBindValue(s["id"].toVariant().toLongLong());
+                insIssueSprint.addBindValue(sp.id);
                 insIssueSprint.exec();
             }
         }
@@ -329,7 +281,9 @@ QList<IssueRow> Database::myOpen(const QString &accountId, int limit) const
 std::optional<IssueDetail> Database::issue(const QString &key) const
 {
     QSqlQuery q(db());
-    q.prepare("SELECT " + kCols + ",i.description_html"
+    q.prepare("SELECT " + kCols + ",i.description_html,"
+              " (SELECT GROUP_CONCAT(s.name, ', ') FROM issue_sprints x JOIN sprints s ON s.id = x.sprint_id"
+              "  WHERE x.issue_id = i.id)"
               " FROM issues i WHERE i.key=?");
     q.addBindValue(key);
     q.exec();
@@ -338,6 +292,7 @@ std::optional<IssueDetail> Database::issue(const QString &key) const
     IssueDetail d;
     static_cast<IssueRow &>(d) = readRow(q);
     d.descriptionHtml = q.value(15).toString();
+    d.sprint = q.value(16).toString();
     return d;
 }
 
@@ -424,7 +379,7 @@ QList<IssueRow> Database::sprintIssues(qint64 sprintId) const
     return readRows(q);
 }
 
-void Database::updateSprint(const QJsonObject &sprint)
+void Database::updateSprint(const SprintInfo &sprint)
 {
     QSqlQuery q(db());
     q.prepare(kUpsertSprint);
