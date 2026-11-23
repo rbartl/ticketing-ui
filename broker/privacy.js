@@ -11,14 +11,14 @@ export function privacyPage(env) {
   const mail = email ? `<a href="mailto:${email}">${email}</a>` : "";
 
   const body = `
-<h1>Datenschutzerklärung – Jira Client</h1>
+<h1>Datenschutzerklärung – Ticketing UI</h1>
 <p><small>Stand: ${esc(env.PRIVACY_DATE || "2026-11-21")} · <a href="#en">English version below</a></small></p>
 
 <h2>1. Verantwortlicher</h2>
 <p>${vendor}<br>${address}<br>E-Mail: ${mail}${imprint ? `<br>Impressum: ${imprint}` : ""}</p>
 
 <h2>2. Worum es geht</h2>
-<p>„Jira Client“ ist eine Desktop-Anwendung für Atlassian Jira Cloud. Sie besteht aus</p>
+<p>„Ticketing UI“ ist eine Desktop-Anwendung für Atlassian Jira Cloud. Sie besteht aus</p>
 <ul>
   <li>der <b>Desktop-App</b> auf dem Rechner der Nutzerin bzw. des Nutzers und</li>
   <li>dem <b>Anmeldedienst</b> unter <code>jira-oauth.edv-bartl.at</code>, der ausschließlich die
@@ -69,13 +69,13 @@ Da der Anmeldedienst keine Daten speichert, liegen bei ${vendor} in der Regel ke
 
 <hr id="en">
 
-<h1>Privacy Policy – Jira Client</h1>
+<h1>Privacy Policy – Ticketing UI</h1>
 
 <h2>1. Controller</h2>
 <p>${vendor}<br>${address}<br>Email: ${mail}${imprint ? `<br>Imprint: ${imprint}` : ""}</p>
 
 <h2>2. Scope</h2>
-<p>"Jira Client" is a desktop application for Atlassian Jira Cloud. It consists of the <b>desktop app</b> on the
+<p>"Ticketing UI" is a desktop application for Atlassian Jira Cloud. It consists of the <b>desktop app</b> on the
 user's computer and the <b>sign-in service</b> at <code>jira-oauth.edv-bartl.at</code>, which only brokers the
 OAuth 2.0 sign-in with Atlassian.</p>
 
@@ -122,7 +122,7 @@ personal data about you.</p>
   return new Response(
     `<!doctype html><html lang="de"><meta charset="utf-8">` +
       `<meta name="viewport" content="width=device-width,initial-scale=1">` +
-      `<title>Datenschutz / Privacy – Jira Client</title>` +
+      `<title>Datenschutz / Privacy – Ticketing UI</title>` +
       `<style>body{font-family:system-ui,sans-serif;max-width:46rem;margin:2rem auto;padding:0 1rem;line-height:1.55;color:#222}` +
       `h1{font-size:1.6rem}h2{font-size:1.15rem;margin-top:1.6rem}code{background:#f2f2f2;padding:0 .2em}hr{margin:3rem 0}</style>` +
       body + `</html>`,

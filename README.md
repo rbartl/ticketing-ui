@@ -1,4 +1,4 @@
-# Jira Client
+# Ticketing UI
 
 Schneller Desktop-Client für Jira Cloud (Qt 6 / C++), lokal zuerst.
 
@@ -88,7 +88,7 @@ npx wrangler deploy                        # -> https://jira-oauth.edv-bartl.at 
 ### App konfigurieren
 
 Standardmäßig nutzt die App den Broker `https://jira-oauth.edv-bartl.at` (CMake-Option `JIRA_OAUTH_BROKER_URL`),
-es ist also nichts zu konfigurieren. Überschreiben lässt sich das per `<AppData>/oauth.json` (Linux: `~/.local/share/edvbartl/jira-client/oauth.json`), oder dieselben Werte als
+es ist also nichts zu konfigurieren. Überschreiben lässt sich das per `<AppData>/oauth.json` (Linux: `~/.local/share/edvbartl/ticketing-ui/oauth.json`), oder dieselben Werte als
 CMake-Optionen (`-DJIRA_OAUTH_BROKER_URL=…` bzw. `-DJIRA_OAUTH_CLIENT_ID=… -DJIRA_OAUTH_CLIENT_SECRET=…`):
 
 ```json
@@ -118,17 +118,17 @@ Benötigt: Qt ≥ 6.4 (Widgets, Network, Sql + SQLite-Treiber), CMake ≥ 3.21.
 ```sh
 sudo apt install cmake ninja-build qt6-base-dev libqt6sql6-sqlite
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release && cmake --build build
-./build/jira-client
+./build/ticketing-ui
 ```
 
 **macOS**
 ```sh
 brew install qt cmake ninja
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$(brew --prefix qt)"
-cmake --build build && macdeployqt build/jira-client.app
+cmake --build build && macdeployqt build/ticketing-ui.app
 ```
 
 **Windows**: Qt 6 über den Qt Online Installer (MSVC),
 dann mit CMake bauen und `windeployqt` ausführen.
 
-Daten liegen unter dem `AppDataLocation` von Qt (Linux: `~/.local/share/edvbartl/jira-client/`).
+Daten liegen unter dem `AppDataLocation` von Qt (Linux: `~/.local/share/edvbartl/ticketing-ui/`).

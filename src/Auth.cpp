@@ -330,14 +330,14 @@ void OAuthLogin::onReadyRead(QTcpSocket *socket)
         finish("Anmeldung abgebrochen: " + (e.isEmpty() ? q.queryItemValue("error") : e));
         return;
     }
-    respond(socket, 200, "<h2>Angemeldet ✔</h2><p>Du kannst dieses Fenster schließen und zum Jira Client zurückkehren.</p>");
+    respond(socket, 200, "<h2>Angemeldet ✔</h2><p>Du kannst dieses Fenster schließen und zum Ticketing UI zurückkehren.</p>");
     emit callbackReceived();
     exchange(q);
 }
 
 void OAuthLogin::respond(QTcpSocket *socket, int code, const QString &html)
 {
-    const QByteArray body = ("<!doctype html><meta charset=utf-8><title>Jira Client</title>"
+    const QByteArray body = ("<!doctype html><meta charset=utf-8><title>Ticketing UI</title>"
                              "<body style='font-family:sans-serif;margin:3em'>" + html + "</body>").toUtf8();
     socket->write("HTTP/1.1 " + QByteArray::number(code) + (code == 200 ? " OK" : " Error") +
                   "\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\nContent-Length: " +

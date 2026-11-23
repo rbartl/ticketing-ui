@@ -1,4 +1,4 @@
-// OAuth broker for jira-client (Cloudflare Worker).
+// OAuth broker for ticketing-ui (Cloudflare Worker).
 //
 // Atlassian Cloud OAuth 2.0 (3LO) only supports confidential clients, i.e. the token
 // exchange needs the client secret. This worker holds the secret so the desktop app
@@ -39,7 +39,7 @@ export default {
       if (request.method === "GET" && url.pathname === "/callback") return await callback(url, env);
       if (request.method === "POST" && url.pathname === "/token") return await token(request, url, env);
       if (request.method === "POST" && url.pathname === "/refresh") return await refresh(request, env);
-      if (request.method === "GET" && url.pathname === "/") return new Response("jira-client oauth broker\n");
+      if (request.method === "GET" && url.pathname === "/") return new Response("ticketing-ui oauth broker\n");
       return json({ error: "not_found" }, 404);
     } catch (e) {
       return json({ error: "invalid_request", error_description: String(e?.message ?? e) }, 400);
@@ -199,7 +199,7 @@ function json(obj, status = 200) {
 
 function html(message, status) {
   const esc = message.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
-  return new Response(`<!doctype html><meta charset=utf-8><title>Jira Client</title>` +
+  return new Response(`<!doctype html><meta charset=utf-8><title>Ticketing UI</title>` +
     `<body style="font-family:sans-serif;margin:3em"><p>${esc}</p></body>`,
     { status, headers: { "Content-Type": "text/html; charset=utf-8" } });
 }

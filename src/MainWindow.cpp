@@ -38,7 +38,7 @@ static QString fmtTime(const QString &utcIso)
 
 MainWindow::MainWindow(QWidget *parent) : QMainWindow(parent)
 {
-    setWindowTitle("Jira Client");
+    setWindowTitle("Ticketing UI");
     resize(1400, 850);
 
     // Toolbar: account switcher, search, sync ---------------------------------
@@ -368,7 +368,7 @@ void MainWindow::updateAccount(const Account &account, const QString &token)
         ctx->update(account);  // changed scope -> full resync
         m_accountBox->setItemText(i, account.label());
         if (ctx == m_ctx)
-            setWindowTitle("Jira Client – " + account.name);
+            setWindowTitle("Ticketing UI – " + account.name);
     }
 }
 
@@ -412,7 +412,7 @@ void MainWindow::switchAccount(int index)
         QSignalBlocker b(m_accountBox);
         m_accountBox->setCurrentIndex(index);
     }
-    setWindowTitle("Jira Client – " + m_ctx->account().name);
+    setWindowTitle("Ticketing UI – " + m_ctx->account().name);
     m_status->setText(m_ctx->account().name + " · " + m_ctx->sync().status());
     m_currentKey.clear();
     m_renderedKey.clear();
