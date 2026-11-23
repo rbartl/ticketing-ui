@@ -5,27 +5,45 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
 
-// Accounts saved before the query field: project list + extra JQL + age limit -> one JQL.
-static QString legacyJql(const QJsonObject &o)
+// Scope of accounts saved in older formats.
+static void loadScope(Account &a, const QJsonObject &o)
 {
-    QStringList parts;
-    QStringList quoted;
-    for (const auto &p : o["projects"].toArray())
-        quoted << '"' + p.toString().trimmed() + '"';
-    if (!quoted.isEmpty())
-        parts << "project in (" + quoted.join(", ") + ")";
-    const QString extra = o["extraJql"].toString().trimmed();
-    if (!extra.isEmpty())
-        parts << "(" + extra + ")";
-    const int days = o["maxAgeDays"].toInt(0);
-    if (parts.isEmpty() && days > 0)
-        return QString("updated >= -%1d").arg(days);
-    if (days > 0)
-        return "(" + parts.join(" OR ") + QString(") AND updated >= -%1d").arg(days);
-    return parts.join(" OR ");
+    a.query = o["query"].toString().trimmed();
+    if (o.contains("projects") || o.contains("maxAgeDays")) {
+        for (const auto &p : o["projects"].toArray())
+            a.projects << p.toString().trimmed();
+        a.maxAgeDays = o["maxAgeDays"].toInt(0);
+        // Very old format: extra JQL OR-ed with the projects -> keep the combination as own query.
+        const QString extra = o["extraJql"].toString().trimmed();
+        if (!o.contains("query") && !extra.isEmpty()) {
+            QStringList quoted;
+            for (const auto &p : std::as_const(a.projects))
+                quoted << '"' + p + '"';
+            QStringList parts;
+            if (!quoted.isEmpty())
+                parts << "project in (" + quoted.join(", ") + ")";
+            parts << "(" + extra + ")";
+            a.query = "(" + parts.join(" OR ") + ")";
+            if (a.maxAgeDays > 0)
+                a.query += QString(" AND updated >= -%1d").arg(a.maxAgeDays);
+        }
+        return;
+    }
+    // Query-only format: plain "project in (…) AND updated >= -Nd" back to projects + age.
+    a.maxAgeDays = 0;
+    static const QRegularExpression simple(
+        R"(^(?:\(?project in \(([^()]*)\)\)?)?\s*(?:(?<=\))\s*AND\s+)?(?:updated >= -(\d+)d)?$)");
+    const auto m = simple.match(a.query);
+    if (!m.hasMatch())
+        return;  // stays an own query
+    for (const QString &p : m.captured(1).split(',', Qt::SkipEmptyParts))
+        a.projects << p.trimmed().remove('"');
+    a.maxAgeDays = m.captured(2).toInt();
+    a.query.clear();
 }
 
 QString Account::apiBase() const
@@ -54,7 +72,9 @@ QList<Account> AccountStore::load()
         a.baseUrl = o["baseUrl"].toString();
         a.email = o["email"].toString();
         a.backend = o["backend"].toString("jira");
-        a.query = o.contains("query") ? o["query"].toString() : legacyJql(o);
+        loadScope(a, o);
+        for (const auto &p : o["interest"].toArray())
+            a.interest << p.toString();
         a.authType = o["auth"].toString("token");
         a.cloudId = o["cloudId"].toString();
         a.oauthUser = o["oauthUser"].toString();
@@ -73,7 +93,10 @@ void AccountStore::save(const QList<Account> &accounts)
             {"baseUrl", a.baseUrl},
             {"email", a.email},
             {"backend", a.backend},
+            {"projects", QJsonArray::fromStringList(a.projects)},
+            {"maxAgeDays", a.maxAgeDays},
             {"query", a.query},
+            {"interest", QJsonArray::fromStringList(a.interest)},
             {"auth", a.authType},
             {"cloudId", a.cloudId},
             {"oauthUser", a.oauthUser},
@@ -100,10 +123,26 @@ QString AccountStore::readToken(const QString &key)
     return readSecrets()[key].toString();
 }
 
+static bool writeSecrets(const QJsonObject &all, QString *err);
+
 bool AccountStore::writeToken(const QString &key, const QString &token, QString *err)
 {
     QJsonObject all = readSecrets();
     all[key] = token;
+    return writeSecrets(all, err);
+}
+
+void AccountStore::removeToken(const QString &key)
+{
+    QJsonObject all = readSecrets();
+    if (all.contains(key)) {
+        all.remove(key);
+        writeSecrets(all, nullptr);
+    }
+}
+
+static bool writeSecrets(const QJsonObject &all, QString *err)
+{
     QSaveFile f(secretsPath());
     if (!f.open(QIODevice::WriteOnly)) {
         if (err)

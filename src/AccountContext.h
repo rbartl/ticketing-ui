@@ -31,8 +31,8 @@ public:
     void searchCloud(const QString &text, std::function<void(QList<IssueRow>, QString err)> cb);
     // Fetch one issue (not in scope or refresh cache) and store it in the local cache.
     void fetchIssue(const QString &key, std::function<void(bool ok, QString err)> cb);
-    // Comments: shown from cache, refreshed here in the background.
-    void refreshComments(const QString &key, std::function<void(bool changed)> cb);
+    // Comments: shown from cache, refreshed here in the background (force: also when fetched just now).
+    void refreshComments(const QString &key, std::function<void(bool changed)> cb, bool force = false);
 
 private:
     Account m_account;

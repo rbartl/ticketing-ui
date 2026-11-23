@@ -118,7 +118,7 @@ void SyncEngine::fetchPages(int updatedWithinMinutes, const QString &cursor, int
             done(false, total, err);
             return;
         }
-        const int n = total + m_db->upsertIssues(page.issues, true);
+        const int n = total + m_db->upsertIssues(page.issues, true, full);
         if (full) {
             setStatus(QString("Erstsync: %1 Issues …").arg(n));
             if (!page.issues.isEmpty())

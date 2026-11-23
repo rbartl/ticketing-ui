@@ -8,75 +8,81 @@
 class AccountContext;
 class AccountPanel;
 class AuthProvider;
-class OAuthSession;
 class IssueListModel;
+class IssueProxyModel;
+class IssueView;
+class OAuthSession;
+class QAction;
+class QCheckBox;
 class QComboBox;
 class QLabel;
 class QLineEdit;
 class QStackedWidget;
 class QTableView;
-class QTextBrowser;
 struct Account;
 
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget *parent = nullptr);
+    void saveSnapshots(const QString &dir);  // development: the main views as PNG
 
 private:
-    QTableView *makeTable(IssueListModel *model);
+    void buildMenus();
+    QWidget *buildList();
+    void setupTable();
+
+    // Accounts
     void loadAccounts();
     void addContext(const Account &account, AuthProvider *auth);
-    void switchAccount(int index);
-    void showAccountPanel();
     void addAccount(const Account &account, const QString &token);
     void updateAccount(const Account &account, const QString &token);
+    void removeAccount(const QString &accountId);
+    void rebuildAccountBox();
+    void switchScope(int index);  // 0 = all accounts
+    void showAccountPanel();
+    QList<AccountContext *> scope() const;  // contexts the list shows
+    AccountContext *context(const QString &accountId) const;
+    AccountContext *currentContext() const;  // selected account; with "Alle Konten" the one of the open issue
 
-    void runLocalSearch();
+    // List: all local tickets of the selected account(s), or the search results
+    void reloadList();
     void runCloudSearch();
-    void applyResults();
-    void updateSearchInfo();
+    void applyRows();
+    void updateListHeader();
+    bool interestOnly();  // list limited to "my projects" (Account::interest); shows / hides the checkbox
+    void updateStatus();
+    void selectionChanged();
+    void reselect();
 
-    void setListMode(int mode);  // 0 tickets (search / my open), 1 sprint
-    void updateListTitle();
-    void reloadSprints();
-    void showSprint();
-
-    void openIssue(const QString &key);
-    void backgroundRefresh();
-    void renderDetail();
-    void reselect(QTableView *view, IssueListModel *model);
-
-    // One session per Atlassian identity (e.g. own address + customer addresses),
-    // shared by all sites of that identity. Key: Atlassian account id.
     OAuthSession *oauthSession(const QString &atlassianAccountId);
     QHash<QString, OAuthSession *> m_sessions;
     QList<AccountContext *> m_contexts;
-    AccountContext *m_ctx = nullptr;
+    QString m_scopeId;  // empty = all accounts
 
     QStackedWidget *m_pages = nullptr;  // main view | account panel
     AccountPanel *m_accountPanel = nullptr;
     QComboBox *m_accountBox = nullptr;
     QLineEdit *m_search = nullptr;
-    QStackedWidget *m_lists = nullptr;
-    class QButtonGroup *m_modeButtons = nullptr;
-    QLabel *m_listTitle = nullptr;
-    QTableView *m_resultView = nullptr;
-    IssueListModel *m_resultModel = nullptr;
-    QComboBox *m_sprintBox = nullptr;
-    QTableView *m_sprintView = nullptr;
-    IssueListModel *m_sprintModel = nullptr;
-    QTextBrowser *m_detail = nullptr;
-    QLabel *m_status = nullptr;
-    QLabel *m_searchInfo = nullptr;
+    QAction *m_syncAct = nullptr, *m_hideDoneAct = nullptr;
 
-    QTimer m_cloudTimer;    // debounce for the cloud fallback
-    QTimer m_refreshTimer;  // debounce for background refresh of the opened issue
+    QLabel *m_listTitle = nullptr, *m_listSub = nullptr;
+    QCheckBox *m_hideDone = nullptr;
+    QCheckBox *m_interestOnly = nullptr;  // "Nur meine Projekte" (Account::interest)
+    QStackedWidget *m_listStack = nullptr;  // table | empty state
+    QTableView *m_table = nullptr;
+    IssueListModel *m_model = nullptr;
+    IssueProxyModel *m_proxy = nullptr;
+    QWidget *m_cloudBar = nullptr;
+    QLabel *m_cloudInfoLabel = nullptr;
+    IssueView *m_issue = nullptr;
 
-    QList<IssueRow> m_local, m_cloud;
+    QLabel *m_connection = nullptr, *m_syncTimes = nullptr, *m_counts = nullptr;
+
+    QTimer m_reloadTimer;  // coalesces sync notifications of several accounts
+    QList<IssueRow> m_rows, m_cloud;
     double m_localMs = 0;
     QString m_cloudInfo;
     quint64 m_searchGen = 0;
-    QString m_currentKey;
-    QString m_renderedKey;
+    QString m_selAccount, m_selKey;  // selected row, kept across reloads
 };

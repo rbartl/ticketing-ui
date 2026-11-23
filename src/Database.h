@@ -12,8 +12,12 @@ struct IssueRow {
     qint64 id = 0;
     QString key, summary, status, statusCat, assignee, priority, issueType, updated, rank;
     QString project, reporter, labels, created;  // labels space separated
+    QString assigneeId;
+    bool watching = false;  // the own user watches it
+    bool unread = false;    // changed since it was last opened
     bool inScope = true;
-    bool cloud = false;  // result of the cloud fallback search, not stored locally
+    bool cloud = false;   // result of the cloud fallback search, not stored locally
+    QString accountId;    // set by the UI when lists of several accounts are merged
 };
 
 struct IssueDetail : IssueRow {
@@ -29,7 +33,6 @@ struct SprintInfo {
 
 // Everything stored about one issue, as delivered by the backend.
 struct IssueRecord : IssueDetail {
-    QString assigneeId;
     QString descriptionText;                   // for the full text index
     std::optional<QList<SprintInfo>> sprints;  // nullopt = unknown, keep the stored ones
 };
@@ -52,11 +55,17 @@ public:
     void setState(const QString &key, const QString &value);
 
     // Issues ------------------------------------------------------------
-    int upsertIssues(const QList<IssueRecord> &issues, bool inScope);
-    QList<IssueRow> search(const QString &text, int limit) const;
-    QList<IssueRow> myOpen(const QString &accountId, int limit) const;
+    // markRead: the first download of a scope must not flag everything as unread.
+    int upsertIssues(const QList<IssueRecord> &issues, bool inScope, bool markRead = false);
+    // Filters apply before the limit: hideDone drops finished issues, projects (keys, empty = all) limits the projects.
+    QList<IssueRow> search(const QString &text, int limit, bool hideDone = false) const;
     std::optional<IssueDetail> issue(const QString &key) const;
     void touchViewed(const QString &key);
+    void markRead(const QString &key);
+
+    // Everything in the sync scope, newest change first.
+    QList<IssueRow> localIssues(int limit, bool hideDone = false, const QStringList &projects = {}) const;
+    int unreadCount() const;                         // in the sync scope
 
     QSet<qint64> inScopeIds() const;
     void markOutOfScope(const QSet<qint64> &ids);
@@ -64,7 +73,6 @@ public:
 
     // Sprints -----------------------------------------------------------
     QList<SprintInfo> openSprints() const;
-    QList<IssueRow> sprintIssues(qint64 sprintId) const;
     void updateSprint(const SprintInfo &sprint);
 
     // Comment cache -----------------------------------------------------

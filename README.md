@@ -10,33 +10,41 @@ Jira Cloud ──(SyncEngine, Hintergrund)──► SQLite + FTS5 (pro Konto) �
      └──────── Cloud-Fallback (Suche, fremde Issues, Kommentare) ◄─────┘
 ```
 
-- **Sync-Bereich** pro Konto: frei wählbares JQL mit Vorlagen (leer = alle Tickets).
-  Erstsync komplett, danach alle 60 s nur `updated >= -Nm`.
-  Alle 6 h ID-Abgleich (gelöschte Issues / aus dem Bereich gefallene → Cache).
-  Alle 5 min Sprint-Status (geschlossene Sprints).
 - **Cache**: Issues außerhalb des Bereichs, die geöffnet wurden. Werden nach 30 Tagen ohne Aufruf gelöscht.
 - **Kommentare** werden nicht synchronisiert: Sie werden aus dem lokalen Cache sofort angezeigt und beim Öffnen
   im Hintergrund aktualisiert (frühestens alle 30 s je Issue).
-- **Suche**: Lokal per FTS5 (Key, Titel, Beschreibung, Labels) bei jedem Tastendruck. Nach 350 ms Pause zusätzlich
-  `text ~ "…" AND NOT (<Bereich>)` in der Cloud. Die Treffer werden mit ☁ markiert angehängt.
+- **Suche**: Lokal per FTS5 (Key, Titel, Beschreibung, Labels) bei jedem Tastendruck. „In der Cloud weitersuchen“
+  (`Strg+Enter`) sucht zusätzlich `text ~ "…" AND NOT (<Bereich>)`; die Treffer werden mit ☁ markiert angehängt.
+- **Sync-Bereich** pro Konto („Lokal speichern“): Projekte auswählen (keins = alle) und auf zuletzt geänderte Tickets begrenzen; alternativ eigenes JQL.
+  Erstsync komplett, danach alle 60 s nur `updated >= -Nm`.
+  Alle 6 h ID-Abgleich (gelöschte Issues / aus dem Bereich gefallene → Cache).
+  Alle 5 min Sprint-Status (geschlossene Sprints).
+- **Meine Projekte** pro Konto („Anzeigen“): Projekte ankreuzen; die Liste zeigt mit „Nur meine Projekte“ nur diese, die Suche weiterhin alles Lokale. Filter (auch „Erledigte ausblenden“) wirken in der DB-Abfrage, also vor dem Limit.
+- **Liste**: alle lokal gespeicherten Tickets („Lokal speichern“) des gewählten Kontos oder über „Alle Konten“,
+  sortierbar, „Erledigte ausblenden“. Ungelesen = seit dem letzten Öffnen geändert (fett, Punkt, Zähler);
+  der Erstsync zählt als gelesen.
+- **Ticket-Aktionen**: Status ändern, Mir zuweisen, Kommentar senden; Tabs Details / Kommentare / Verlauf.
 - **Mehrere Konten**: eigene DB je Konto, alle synchronisieren parallel. Anmeldung per API-Token oder OAuth, Geheimnisse in `secrets.json` im Datenverzeichnis (nur für den Benutzer lesbar; kein OS-Schlüsselbund, der auf macOS nach jedem Neubau nach dem Passwort fragt).
 
 | Datei | Inhalt |
 |---|---|
-| `src/Backend.h` | Schnittstelle zum Ticketsystem: Sync, Detailfelder, Aktionen, Abfrage-Vorlagen. UI, Sync und DB kennen nur diese |
+| `src/Backend.h` | Schnittstelle zum Ticketsystem: Sync, Detailfelder, Aktionen, Sync-Bereich → Abfrage, Projektliste. UI, Sync und DB kennen nur diese |
 | `src/JiraBackend.*` | Jira Cloud: JQL, JSON → neutrale Datensätze, Sprints, Kommentare, Statusübergänge |
 | `src/JiraClient.*` | REST-Client (HTTP/2, Retry bei 429/503, Token-Erneuerung bei 401) |
 | `src/Auth.*` | API-Token, OAuth-Sessions je Atlassian-Benutzer, Browser-Login (Broker oder direkt) |
 | `broker/` | Cloudflare Worker: hält das OAuth-Client-Secret |
 | `src/Database.*` | Schema, Upsert, FTS, Sprints, Kommentar-Cache |
 | `src/SyncEngine.*` | Erstsync, inkrementeller Sync, Abgleich |
-| `src/AccountContext.*` | Konto = Client + DB + Sync, Cloud-Fallback |
+| `src/AccountContext.*` | Konto = Backend + DB + Sync, Cloud-Fallback |
 | `src/Adf.*` | Atlassian Document Format → HTML / Text |
-| `src/MainWindow.*` | UI: Suche, Sprint, Detail |
+| `src/MainWindow.*` | Hauptfenster: Menü, Seitenleiste, Liste, Suche, Statusleiste |
+| `src/IssueListModel.*` | Liste: Spalten, Sortierung, „Erledigte ausblenden“, Darstellung (Typ, Prio, Status) |
+| `src/IssueView.*` | Detail: Kopf, Aktionen, Tabs Details / Kommentare / Verlauf |
+| `src/AccountPanel.*` | Konten verwalten (im Hauptfenster): Liste, Zugang, Lokal speichern |
 
 ## Anmeldung
 
-Pro Konto (= Jira-Site) wählbar, beliebig gemischt (Menü „+ Konto“, öffnet sich im Hauptfenster):
+Pro Konto (= Jira-Site) wählbar, beliebig gemischt („Datei → Konto hinzufügen“, öffnet sich im Hauptfenster):
 
 1. **API-Token** (Standard): E-Mail + Token von [id.atlassian.com](https://id.atlassian.com/manage-profile/security/api-tokens).
    Funktioniert ohne Freigabe durch die Firma.
@@ -105,12 +113,15 @@ oder ohne Broker (eigene App, Secret lokal):
 
 | Taste | Aktion |
 |---|---|
-| `Strg+L` / `Strg+F` | Suchfeld |
+| `Strg+F` / `Strg+K` | Suchfeld |
 | `Enter` (im Suchfeld) | in die Ergebnisliste |
 | `Esc` | Suche leeren / zurück zur Suche |
-| `Strg+T` | Suche ↔ Sprint |
-| `Strg+1…9` | Konto wechseln |
-| `Strg+R` | sofort synchronisieren |
+| `Strg+Enter` | in der Cloud weitersuchen; im Kommentarfeld: Kommentar senden |
+| `Strg+1…9` / `Strg+0` | Konto wechseln / alle Konten |
+| `F5` / `Strg+R` | sofort synchronisieren |
+| `Strg+O` | Ticket im Browser öffnen |
+
+Auf macOS jeweils `⌘` statt `Strg`.
 
 ## Bauen
 
@@ -132,5 +143,10 @@ cmake --build build && macdeployqt build/ticketing-ui.app
 
 **Windows**: Qt 6 über den Qt Online Installer (MSVC),
 dann mit CMake bauen und `windeployqt` ausführen.
+
+**Screenshots für die Entwicklung**: `TICKETING_UI_SNAPSHOT=<ordner> QT_QPA_PLATFORM=offscreen ./build/ticketing-ui.app/Contents/MacOS/ticketing-ui`
+rendert die Hauptansichten als PNG in `<ordner>` und beendet sich. Konten und Daten kommen dabei aus dem
+Test-Verzeichnis von Qt (macOS: `~/.qttest/Library/Application Support/edvbartl/ticketing-ui`), Einstellungen aus
+`<ordner>`; die echten Daten bleiben unberührt.
 
 Daten liegen unter dem `AppDataLocation` von Qt (Linux: `~/.local/share/edvbartl/ticketing-ui/`).

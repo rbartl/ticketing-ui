@@ -11,9 +11,10 @@ public:
     JiraBackend(const Account &account, AuthProvider *auth, Database *db, QObject *parent = nullptr);
 
     const BackendType &type() const override { return BackendType::jira(); }
-    QString scopeQuery(const Account &account) const override;
+    static QString scopeJql(const Account &account);  // BackendType::scopeQuery
 
     void checkLogin(std::function<void(QString, QString)> cb) override;
+    void fetchProjects(std::function<void(QList<ProjectInfo>, QString)> cb) override;
     void prepare(std::function<void(QString, QString)> cb) override;
     void fetchIssues(const QString &scope, int updatedWithinMinutes, const QString &cursor,
                      std::function<void(IssuePage, QString)> cb) override;
@@ -26,9 +27,11 @@ public:
     void searchText(const QString &text, const QString &scope,
                     std::function<void(QList<IssueRow>, QString)> cb) override;
     void fetchComments(const QString &key, std::function<void(QList<CommentRow>, QString)> cb) override;
+    void fetchHistory(const QString &key, std::function<void(QList<HistoryEntry>, QString)> cb) override;
 
     QList<DetailField> detailFields(const IssueDetail &issue) const override;
     QString browseUrl(const QString &key) const override;
+    QString myId() const override { return m_me; }
 
     void transitions(const QString &key, std::function<void(QList<Transition>, QString)> cb) override;
     void transition(const QString &key, const QString &transitionId, Done cb) override;
@@ -36,8 +39,11 @@ public:
     void assignToMe(const QString &key, Done cb) override;
 
 private:
+    void fetchProjectPage(int startAt, QList<ProjectInfo> found, std::function<void(QList<ProjectInfo>, QString)> cb);
     QStringList fields() const;
     IssueRecord record(const QJsonObject &issue) const;
+    void fetchHistoryPage(const QString &key, int startAt, std::shared_ptr<QList<HistoryEntry>> acc,
+                          std::function<void(QList<HistoryEntry>, QString)> cb);
     void fetchCommentPage(const QString &key, int startAt, std::shared_ptr<QList<CommentRow>> acc,
                           std::function<void(QList<CommentRow>, QString)> cb);
 

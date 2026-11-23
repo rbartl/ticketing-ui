@@ -13,7 +13,11 @@ struct Account {
     QString authType = "token";  // "token" | "oauth"
     QString cloudId;        // only for OAuth accounts
     QString oauthUser;      // only for OAuth: Atlassian account id = which login this site uses
-    QString query;          // what is kept locally, in the backend's query language; empty = all tickets
+    // What is kept locally (see BackendType::scopeQuery):
+    QStringList projects;   // project keys; empty = all projects
+    int maxAgeDays = 90;    // only tickets changed within that many days; 0 = any age
+    QString query;          // own query in the backend's language; when set it replaces projects + maxAgeDays
+    QStringList interest;   // project keys the list shows with "Nur meine Projekte"; empty = everything
     bool isOAuth() const { return authType == "oauth"; }
     QString label() const { return email.isEmpty() ? name : name + "  ·  " + email; }
     // REST base: the site itself (API token) or the api.atlassian.com gateway (OAuth).
@@ -28,4 +32,5 @@ public:
     // Secrets by key: account id (API token) or "oauth:<atlassian account id>" (OAuth session).
     static QString readToken(const QString &key);
     static bool writeToken(const QString &key, const QString &token, QString *err = nullptr);
+    static void removeToken(const QString &key);
 };

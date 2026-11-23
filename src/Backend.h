@@ -13,15 +13,15 @@
 
 // Static description of a backend type: what the account form and the UI need before an account exists.
 struct BackendType {
-    struct Preset {
-        QString label;  // "Mir zugewiesen"
-        QString query;  // in the backend's query language; empty = all tickets
-    };
     QString id;           // stored in accounts.json ("jira")
     QString name;         // "Jira Cloud"
     QString queryLabel;   // name of the query language: "JQL"
     QString openLabel;    // link to the ticket in the system's web UI: "In Jira öffnen"
-    QList<Preset> presets;  // templates for "Lokal speichern", the first one is the default
+    QString urlPlaceholder;  // account form
+    QString secretLabel;     // "API-Token"
+    QString secretHint;      // HTML: where to get it
+    // Query describing everything that is kept locally, from the account's projects / maxAgeDays / query.
+    QString (*scopeQuery)(const Account &account);
 
     static const BackendType &jira();
     static const BackendType &byId(const QString &id);  // unknown id -> jira
@@ -39,6 +39,18 @@ struct Transition {
     QString name;  // shown to the user: target status or the workflow step's name
 };
 
+// One change in the history of an issue.
+struct HistoryEntry {
+    QString when;  // UTC ISO
+    QString who;
+    QString text;  // e.g. "Status: Zu erledigen → In Arbeit", one line per changed field
+};
+
+struct ProjectInfo {
+    QString key;   // as stored in Account::projects
+    QString name;
+};
+
 struct IssuePage {
     QList<IssueRecord> issues;
     QString next;  // cursor of the next page, empty = last page
@@ -52,12 +64,10 @@ public:
     using QObject::QObject;
     virtual const BackendType &type() const = 0;
 
-    // Scope ---------------------------------------------------------------
-    // Query describing everything that is kept locally, derived from the account settings.
-    virtual QString scopeQuery(const Account &account) const = 0;
-
     // Checks the credentials; returns the display name of the logged in user.
     virtual void checkLogin(std::function<void(QString displayName, QString err)> cb) = 0;
+    // All projects the user can see, sorted by name (for "Lokal speichern").
+    virtual void fetchProjects(std::function<void(QList<ProjectInfo>, QString err)> cb) = 0;
 
     // Sync ----------------------------------------------------------------
     // Once per session before syncing (discover fields, own user id, …). Returns the own user id.
@@ -78,11 +88,14 @@ public:
     virtual void searchText(const QString &text, const QString &scope,
                             std::function<void(QList<IssueRow>, QString err)> cb) = 0;
     virtual void fetchComments(const QString &key, std::function<void(QList<CommentRow>, QString err)> cb) = 0;
+    // Newest first.
+    virtual void fetchHistory(const QString &key, std::function<void(QList<HistoryEntry>, QString err)> cb) = 0;
 
     // Detail view -----------------------------------------------------------
     // Properties in display order (status is shown separately by the UI).
     virtual QList<DetailField> detailFields(const IssueDetail &issue) const = 0;
     virtual QString browseUrl(const QString &key) const = 0;
+    virtual QString myId() const = 0;  // own user id, as in IssueRow::assigneeId; empty until prepared
 
     // Actions ---------------------------------------------------------------
     virtual void transitions(const QString &key, std::function<void(QList<Transition>, QString err)> cb) = 0;

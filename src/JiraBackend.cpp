@@ -3,6 +3,7 @@
 #include "JiraClient.h"
 
 #include <QDateTime>
+#include <algorithm>
 #include <QJsonArray>
 #include <QRegularExpression>
 
@@ -15,13 +16,11 @@ const BackendType &BackendType::jira()
         "Jira Cloud",
         "JQL",
         "In Jira öffnen",
-        {
-            {"Woran ich beteiligt bin, letztes Jahr geändert",
-             "(assignee = currentUser() OR reporter = currentUser() OR watcher = currentUser()) AND updated >= -365d"},
-            {"Mir zugewiesen", "assignee = currentUser()"},
-            {"Alle Tickets, in den letzten 90 Tagen geändert", "updated >= -90d"},
-            {"Alle Tickets", ""},
-        },
+        "https://firma.atlassian.net",
+        "API-Token",
+        "Token erstellen unter <a href=\"https://id.atlassian.com/manage-profile/security/api-tokens\">"
+        "id.atlassian.com → Sicherheit → API-Token</a>. Wird nur lokal auf diesem Rechner gespeichert.",
+        &JiraBackend::scopeJql,
     };
     return t;
 }
@@ -89,16 +88,28 @@ JiraBackend::JiraBackend(const Account &account, AuthProvider *auth, Database *d
     }
 }
 
-QString JiraBackend::scopeQuery(const Account &account) const
+QString JiraBackend::scopeJql(const Account &account)
 {
-    const QString q = account.query.trimmed();
-    return q.isEmpty() ? "project IS NOT EMPTY" : q;  // all tickets; /search/jql rejects JQL without a restriction
+    const QString own = account.query.trimmed();
+    if (!own.isEmpty())
+        return own;
+    QStringList parts;
+    if (!account.projects.isEmpty()) {
+        QStringList quoted;
+        for (const QString &p : account.projects)
+            quoted << '"' + p + '"';
+        parts << "project in (" + quoted.join(", ") + ")";
+    }
+    if (account.maxAgeDays > 0)
+        parts << QString("updated >= -%1d").arg(account.maxAgeDays);
+    // All tickets: /search/jql rejects JQL without a restriction.
+    return parts.isEmpty() ? "project IS NOT EMPTY" : parts.join(" AND ");
 }
 
 QStringList JiraBackend::fields() const
 {
     QStringList f{"summary", "status", "issuetype", "priority", "assignee", "reporter",
-                  "labels", "created", "updated", "description", "project"};
+                  "labels", "created", "updated", "description", "project", "watches"};
     if (!m_sprintField.isEmpty()) f << m_sprintField;
     if (!m_rankField.isEmpty()) f << m_rankField;
     return f;
@@ -116,6 +127,7 @@ IssueRecord JiraBackend::record(const QJsonObject &issue) const
     r.statusCat = st["statusCategory"].toObject()["key"].toString();  // new | indeterminate | done
     r.assignee = f["assignee"].toObject()["displayName"].toString();
     r.assigneeId = f["assignee"].toObject()["accountId"].toString();
+    r.watching = f["watches"].toObject()["isWatching"].toBool();
     r.priority = f["priority"].toObject()["name"].toString();
     r.issueType = f["issuetype"].toObject()["name"].toString();
     r.updated = toUtcIso(f["updated"].toString());
@@ -144,6 +156,31 @@ void JiraBackend::checkLogin(std::function<void(QString, QString)> cb)
 {
     m_client->get("/rest/api/3/myself", {}, [cb](const QJsonDocument &doc, const QString &err) {
         cb(doc["displayName"].toString(), err);
+    });
+}
+
+void JiraBackend::fetchProjects(std::function<void(QList<ProjectInfo>, QString)> cb)
+{
+    fetchProjectPage(0, {}, std::move(cb));
+}
+
+void JiraBackend::fetchProjectPage(int startAt, QList<ProjectInfo> found,
+                                   std::function<void(QList<ProjectInfo>, QString)> cb)
+{
+    const QUrlQuery query{{"startAt", QString::number(startAt)}, {"maxResults", "100"}, {"orderBy", "name"}};
+    m_client->get("/rest/api/3/project/search", query,
+                  [this, startAt, found, cb](const QJsonDocument &doc, const QString &err) mutable {
+        if (!err.isEmpty()) {
+            cb({}, err);
+            return;
+        }
+        const QJsonArray values = doc["values"].toArray();
+        for (const auto &v : values)
+            found << ProjectInfo{v.toObject()["key"].toString(), v.toObject()["name"].toString()};
+        if (doc["isLast"].toBool(true) || values.isEmpty())
+            cb(found, {});
+        else
+            fetchProjectPage(startAt + int(values.size()), found, cb);
     });
 }
 
@@ -309,6 +346,47 @@ void JiraBackend::fetchCommentPage(const QString &key, int startAt, std::shared_
             fetchCommentPage(key, next, acc, cb);
         else
             cb(*acc, {});
+    });
+}
+
+void JiraBackend::fetchHistory(const QString &key, std::function<void(QList<HistoryEntry>, QString)> cb)
+{
+    fetchHistoryPage(key, 0, std::make_shared<QList<HistoryEntry>>(), cb);
+}
+
+void JiraBackend::fetchHistoryPage(const QString &key, int startAt, std::shared_ptr<QList<HistoryEntry>> acc,
+                                   std::function<void(QList<HistoryEntry>, QString)> cb)
+{
+    QUrlQuery q{{"startAt", QString::number(startAt)}, {"maxResults", "100"}};
+    m_client->get("/rest/api/3/issue/" + key + "/changelog", q,
+                  [=, this](const QJsonDocument &doc, const QString &err) {
+        if (!err.isEmpty()) {
+            cb({}, err);
+            return;
+        }
+        const auto values = doc["values"].toArray();
+        for (const auto &v : values) {
+            const auto h = v.toObject();
+            QStringList lines;
+            for (const auto &iv : h["items"].toArray()) {
+                const auto item = iv.toObject();
+                const QString from = item["fromString"].toString(), to = item["toString"].toString();
+                const QString field = item["field"].toString();
+                if (field == "description")
+                    lines << "Beschreibung geändert";
+                else
+                    lines << QString("%1: %2 → %3").arg(field, from.isEmpty() ? "–" : from, to.isEmpty() ? "–" : to);
+            }
+            acc->append(HistoryEntry{toUtcIso(h["created"].toString()), h["author"].toObject()["displayName"].toString(),
+                                     lines.join('\n')});
+        }
+        const int next = startAt + int(values.size());
+        if (!values.isEmpty() && !doc["isLast"].toBool(next >= doc["total"].toInt()))
+            fetchHistoryPage(key, next, acc, cb);
+        else {
+            std::reverse(acc->begin(), acc->end());
+            cb(*acc, {});
+        }
     });
 }
 

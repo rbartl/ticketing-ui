@@ -10,7 +10,12 @@
 namespace {
 
 const QString kCols = "i.id,i.key,i.summary,i.status,i.status_cat,i.assignee,i.priority,"
-                      "i.issue_type,i.updated,i.rank,i.in_scope,i.project,i.reporter,i.labels,i.created";
+                      "i.issue_type,i.updated,i.rank,i.in_scope,i.project,i.reporter,i.labels,i.created,"
+                      "i.assignee_id,i.watching,"
+                      "(i.seen_updated IS NULL OR i.updated > i.seen_updated)";
+constexpr int kColCount = 18;
+
+const char *kUnread = "(i.seen_updated IS NULL OR i.updated > i.seen_updated)";
 
 IssueRow readRow(const QSqlQuery &q)
 {
@@ -30,6 +35,9 @@ IssueRow readRow(const QSqlQuery &q)
     r.reporter = q.value(12).toString();
     r.labels = q.value(13).toString();
     r.created = q.value(14).toString();
+    r.assigneeId = q.value(15).toString();
+    r.watching = q.value(16).toInt() != 0;
+    r.unread = q.value(17).toInt() != 0;
     return r;
 }
 
@@ -120,6 +128,20 @@ bool Database::open(const QString &path, const QString &connectionName, QString 
             return false;
         }
     }
+
+    // Columns added later. Existing issues count as read.
+    QSqlQuery cols(d);
+    cols.exec("PRAGMA table_info(issues)");
+    QSet<QString> have;
+    while (cols.next())
+        have.insert(cols.value(1).toString());
+    QSqlQuery q(d);
+    if (!have.contains("watching"))
+        q.exec("ALTER TABLE issues ADD COLUMN watching INTEGER NOT NULL DEFAULT 0");
+    if (!have.contains("seen_updated")) {
+        q.exec("ALTER TABLE issues ADD COLUMN seen_updated TEXT");
+        q.exec("UPDATE issues SET seen_updated = updated");
+    }
     return true;
 }
 
@@ -160,7 +182,7 @@ static const char *kUpsertSprint =
     " board_id=excluded.board_id, start_date=excluded.start_date,"
     " end_date=excluded.end_date, goal=excluded.goal";
 
-int Database::upsertIssues(const QList<IssueRecord> &issues, bool inScope)
+int Database::upsertIssues(const QList<IssueRecord> &issues, bool inScope, bool markRead)
 {
     QSqlDatabase d = db();
     d.transaction();
@@ -168,16 +190,17 @@ int Database::upsertIssues(const QList<IssueRecord> &issues, bool inScope)
     QSqlQuery up(d);
     up.prepare(
         "INSERT INTO issues(id,key,project,summary,status,status_cat,issue_type,priority,assignee,"
-        " assignee_id,reporter,labels,created,updated,rank,description_html,in_scope)"
+        " assignee_id,reporter,labels,created,updated,rank,description_html,in_scope,watching,seen_updated)"
         " VALUES(:id,:key,:project,:summary,:status,:cat,:type,:prio,:assignee,"
-        " :assignee_id,:reporter,:labels,:created,:updated,:rank,:desc,:scope)"
+        " :assignee_id,:reporter,:labels,:created,:updated,:rank,:desc,:scope,:watching,:seen)"
         " ON CONFLICT(id) DO UPDATE SET key=excluded.key, project=excluded.project,"
         " summary=excluded.summary, status=excluded.status, status_cat=excluded.status_cat,"
         " issue_type=excluded.issue_type, priority=excluded.priority, assignee=excluded.assignee,"
         " assignee_id=excluded.assignee_id, reporter=excluded.reporter, labels=excluded.labels,"
         " created=excluded.created, updated=excluded.updated,"
         " rank=COALESCE(excluded.rank, issues.rank), description_html=excluded.description_html,"
-        " in_scope=MAX(issues.in_scope, excluded.in_scope)");
+        " in_scope=MAX(issues.in_scope, excluded.in_scope), watching=excluded.watching,"
+        " seen_updated=COALESCE(excluded.seen_updated, issues.seen_updated)");
     QSqlQuery delFts(d), insFts(d), delSprints(d), insIssueSprint(d), upSprint(d);
     delFts.prepare("DELETE FROM issues_fts WHERE rowid=?");
     insFts.prepare("INSERT INTO issues_fts(rowid,key,summary,description,labels) VALUES(?,?,?,?,?)");
@@ -207,6 +230,8 @@ int Database::upsertIssues(const QList<IssueRecord> &issues, bool inScope)
         up.bindValue(":rank", nullable(r.rank));
         up.bindValue(":desc", r.descriptionHtml);
         up.bindValue(":scope", inScope ? 1 : 0);
+        up.bindValue(":watching", r.watching ? 1 : 0);
+        up.bindValue(":seen", markRead ? QVariant(r.updated) : QVariant());
         up.exec();
 
         delFts.addBindValue(r.id);
@@ -234,7 +259,9 @@ int Database::upsertIssues(const QList<IssueRecord> &issues, bool inScope)
     return n;
 }
 
-QList<IssueRow> Database::search(const QString &text, int limit) const
+static const char kNotDone[] = " AND i.status_cat IS NOT 'done'";
+
+QList<IssueRow> Database::search(const QString &text, int limit, bool hideDone) const
 {
     QList<IssueRow> out;
     const QString t = text.trimmed();
@@ -251,7 +278,7 @@ QList<IssueRow> Database::search(const QString &text, int limit) const
 
     QSqlQuery q(db());
     q.prepare("SELECT " + kCols + " FROM issues_fts JOIN issues i ON i.id = issues_fts.rowid"
-              " WHERE issues_fts MATCH ? ORDER BY bm25(issues_fts, 10.0, 5.0, 1.0, 2.0) LIMIT ?");
+              " WHERE issues_fts MATCH ?" + QString(hideDone ? kNotDone : "") + " ORDER BY bm25(issues_fts, 10.0, 5.0, 1.0, 2.0) LIMIT ?");
     q.addBindValue(ftsQuery(t));
     q.addBindValue(limit);
     q.exec();
@@ -263,19 +290,27 @@ QList<IssueRow> Database::search(const QString &text, int limit) const
     return out;
 }
 
-QList<IssueRow> Database::myOpen(const QString &accountId, int limit) const
+QList<IssueRow> Database::localIssues(int limit, bool hideDone, const QStringList &projects) const
 {
+    QString where = "i.in_scope=1";
+    if (hideDone)
+        where += kNotDone;
+    if (!projects.isEmpty())
+        where += " AND i.project IN (" + QStringList(projects.size(), "?").join(',') + ")";
     QSqlQuery q(db());
-    if (accountId.isEmpty()) {
-        q.prepare("SELECT " + kCols + " FROM issues i WHERE i.in_scope=1 ORDER BY i.updated DESC LIMIT ?");
-    } else {
-        q.prepare("SELECT " + kCols + " FROM issues i WHERE i.assignee_id=? AND i.status_cat<>'done'"
-                  " ORDER BY i.updated DESC LIMIT ?");
-        q.addBindValue(accountId);
-    }
+    q.prepare("SELECT " + kCols + " FROM issues i WHERE " + where + " ORDER BY i.updated DESC LIMIT ?");
+    for (const QString &p : projects)
+        q.addBindValue(p);
     q.addBindValue(limit);
     q.exec();
     return readRows(q);
+}
+
+int Database::unreadCount() const
+{
+    QSqlQuery q(db());
+    q.exec(QString("SELECT COUNT(*) FROM issues i WHERE i.in_scope=1 AND ") + kUnread);
+    return q.next() ? q.value(0).toInt() : 0;
 }
 
 std::optional<IssueDetail> Database::issue(const QString &key) const
@@ -291,9 +326,17 @@ std::optional<IssueDetail> Database::issue(const QString &key) const
         return std::nullopt;
     IssueDetail d;
     static_cast<IssueRow &>(d) = readRow(q);
-    d.descriptionHtml = q.value(15).toString();
-    d.sprint = q.value(16).toString();
+    d.descriptionHtml = q.value(kColCount).toString();
+    d.sprint = q.value(kColCount + 1).toString();
     return d;
+}
+
+void Database::markRead(const QString &key)
+{
+    QSqlQuery q(db());
+    q.prepare("UPDATE issues SET seen_updated=updated WHERE key=?");
+    q.addBindValue(key);
+    q.exec();
 }
 
 void Database::touchViewed(const QString &key)
@@ -365,18 +408,6 @@ QList<SprintInfo> Database::openSprints() const
         out << s;
     }
     return out;
-}
-
-QList<IssueRow> Database::sprintIssues(qint64 sprintId) const
-{
-    QSqlQuery q(db());
-    q.prepare("SELECT " + kCols + " FROM issue_sprints s JOIN issues i ON i.id = s.issue_id"
-              " WHERE s.sprint_id=?"
-              " ORDER BY CASE i.status_cat WHEN 'new' THEN 0 WHEN 'indeterminate' THEN 1 ELSE 2 END,"
-              " i.rank");
-    q.addBindValue(sprintId);
-    q.exec();
-    return readRows(q);
 }
 
 void Database::updateSprint(const SprintInfo &sprint)

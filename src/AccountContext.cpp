@@ -16,14 +16,14 @@ bool AccountContext::open(QString *err)
     if (!m_db.open(AccountStore::dataDir() + "/" + m_account.id + ".db", m_account.id, err))
         return false;
     m_backend = Backend::create(m_account, m_auth, &m_db, this);
-    m_sync = new SyncEngine(m_backend->scopeQuery(m_account), m_backend, &m_db, this);
+    m_sync = new SyncEngine(m_backend->type().scopeQuery(m_account), m_backend, &m_db, this);
     return true;
 }
 
 void AccountContext::update(const Account &account)
 {
     m_account = account;
-    m_sync->setScope(m_backend->scopeQuery(account));
+    m_sync->setScope(m_backend->type().scopeQuery(account));
 }
 
 QString AccountContext::browseUrl(const QString &key) const
@@ -48,10 +48,10 @@ void AccountContext::fetchIssue(const QString &key, std::function<void(bool, QSt
     });
 }
 
-void AccountContext::refreshComments(const QString &key, std::function<void(bool)> cb)
+void AccountContext::refreshComments(const QString &key, std::function<void(bool)> cb, bool force)
 {
     const qint64 age = QDateTime::currentSecsSinceEpoch() - m_db.commentsFetchedAt(key);
-    if (age < kCommentMinAgeSecs || m_commentsInFlight.contains(key)) {
+    if ((!force && age < kCommentMinAgeSecs) || m_commentsInFlight.contains(key)) {
         cb(false);
         return;
     }
